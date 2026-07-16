@@ -12,14 +12,14 @@ class DatabaseSeeder extends Seeder
 
     /**
      * Seed the application's database.
+     *
+     * O SuperAdminSeeder roda PRIMEIRO: em banco zerado isso garante que o
+     * superadmin fique com id=1 (slot que dá poder extra no dashboard).
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        $this->call([
+            SuperAdminSeeder::class,
         ]);
     }
 }

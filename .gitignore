@@ -20,6 +20,9 @@
 /public/storage
 /storage/*.key
 /storage/pail
+# Fontes/scratch de design (imagens originais usadas p/ gerar os assets do site).
+# Nada do código referencia esta pasta. Comente a linha abaixo se quiser versioná-las.
+/storage/artes
 /vendor
 _ide_helper.php
 Homestead.json
