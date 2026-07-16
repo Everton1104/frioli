@@ -3,6 +3,8 @@
 .env
 .env.backup
 .env.production
+# Deploy local (procedimento de produção) — mantém fora do repo.
+DEPLOY.md
 .phpactor.json
 .phpunit.result.cache
 /.codex
