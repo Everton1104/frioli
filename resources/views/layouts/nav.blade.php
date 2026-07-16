@@ -13,6 +13,7 @@
             <div class="col-6 text-end form-text text-secondary">
                 <a href="{{url('/')}}/#sobre" class="menu-item-sm">Sobre</a>
                 <a href="{{url('/')}}/#servicos" class="menu-item-sm">Serviços</a>
+                <a href="{{url('/')}}/#endereco" class="menu-item-sm">Onde estamos</a>
                 <a href="{{url('/')}}/#contato" class="menu-item-sm">Contato</a>
                 @if(isset(Auth::user()->id))
                     <a href="dashboard" class="menu-item-sm">Home</a>
@@ -34,6 +35,9 @@
     </div>
     <div class="menu-item" onclick="$('.menu-icon').click() && setTimeout(()=>{window.location.href='{{url('/')}}/#servicos'},500)">
         Serviços
+    </div>
+    <div class="menu-item" onclick="$('.menu-icon').click() && setTimeout(()=>{window.location.href='{{url('/')}}/#endereco'},500)">
+        Onde estamos
     </div>
     <div class="menu-item" onclick="$('.menu-icon').click() && setTimeout(()=>{window.location.href='{{url('/')}}/#contato'},500)">
         Contato

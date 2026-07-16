@@ -46,6 +46,7 @@ class AuthenticatedSessionController extends Controller
             RateLimiter::hit($key);
             return back()
                 ->withErrors(['whatsapp' => 'Número não encontrado.'])
+                ->with('cadastro_sugerido', true)
                 ->withInput();
         }
 

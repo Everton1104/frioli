@@ -17,7 +17,7 @@ return new class extends Migration
 
             // Sobre
             ['section' => 'sobre', 'key' => 'titulo', 'label' => 'Sobre — título', 'value' => 'Sobre nós'],
-            ['section' => 'sobre', 'key' => 'texto', 'label' => 'Sobre — texto', 'value' => 'Na <strong>Barbearia Frioli</strong>, unimos técnica e atendimento de qualidade para você sair sempre com o visual impecável. Cortes clássicos e modernos, barba na régua e um ambiente acolhedor para o seu momento de cuidado. Agende pelo painel e receba lembretes pelo WhatsApp.'],
+            ['section' => 'sobre', 'key' => 'texto', 'label' => 'Sobre — texto', 'value' => 'Na <strong>Barbearia Frioli</strong>, unimos técnica e atendimento de qualidade para você sair sempre com o visual impecável. Cortes clássicos e modernos, barba na régua e um ambiente acolhedor para o seu momento de cuidado.'],
 
             // Serviços
             ['section' => 'servicos', 'key' => 'titulo', 'label' => 'Serviços — título', 'value' => 'Serviços'],

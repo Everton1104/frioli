@@ -28,7 +28,7 @@ class AgendaPublicaController extends Controller
         $servicos = ServicosModel::where('excluido', 0)
             ->where('status', 1)
             ->where('visivel_cliente', 1)
-            ->where('retirada', 0)
+            ->where('recorrente', 0)
             ->whereNotNull('valor')
             ->where('valor', '>', 0)
             ->orderBy('descricao')
@@ -101,7 +101,7 @@ class AgendaPublicaController extends Controller
         return ServicosModel::where('excluido', 0)
             ->where('status', 1)
             ->where('visivel_cliente', 1)
-            ->where('retirada', 0)
+            ->where('recorrente', 0)
             ->where('valor', '>', 0)
             ->find($id);
     }

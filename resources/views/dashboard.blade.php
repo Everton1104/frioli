@@ -210,8 +210,8 @@
                 <x-app.select label="Minutos" name="duracao_m" required="true" :options="['00'=>'00', '15'=>'15', '30'=>'30', '45'=>'45']" />
                 <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor" id="servico_valor" step="0.01" min="0" placeholder="Ex.: 50.00" />
                 <div class="form-check mt-3">
-                    <input class="form-check-input" type="checkbox" value="1" name="retirada" id="servico_retirada">
-                    <label class="form-check-label" for="servico_retirada">Serviço de retirada (não pede confirmação)</label>
+                    <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="servico_recorrente">
+                    <label class="form-check-label" for="servico_recorrente">Serviço recorrente / assinatura (não agendável individualmente)</label>
                 </div>
             </form>
         </x-app.modal>
@@ -234,8 +234,8 @@
                     ]"
                 />
                 <div class="form-check mt-3">
-                    <input class="form-check-input" type="checkbox" value="1" name="retirada_edt_servico" id="retirada_edt_servico">
-                    <label class="form-check-label" for="retirada_edt_servico">Serviço de retirada (não pede confirmação)</label>
+                    <input class="form-check-input" type="checkbox" value="1" name="recorrente_edt_servico" id="recorrente_edt_servico">
+                    <label class="form-check-label" for="recorrente_edt_servico">Serviço recorrente / assinatura (não agendável individualmente)</label>
                 </div>
             </form>
         </x-app.modal>
@@ -281,7 +281,7 @@
                                             <svg style="cursor: pointer" onclick="editarServico('{{$servico->id}}')" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
                                         </td>
                                         <td>{{ $servico->descricao }}
-                                            @if($servico->retirada)<span class="badge bg-secondary ms-1">Retirada</span>@endif
+                                            @if($servico->recorrente)<span class="badge bg-secondary ms-1">Recorrente</span>@endif
                                         </td>
                                         <td>{{ $servico->duracao }}</td>
                                         <td class="text-{{ $servico->status == 0 ? 'danger' : 'success' }}">{{ $servico->status == 0 ? 'INATIVO' : 'ATIVO' }}</td>
@@ -306,7 +306,9 @@
                         <input type="hidden" id="mgm-data-atual">
                         {{-- Ações rápidas --}}
                         <div class="d-flex flex-wrap gap-2 mb-3">
-                            <button class="btn btn-sm btn-outline-success" onclick="mgmPreset('comercial')">Horário comercial (08:00–17:45)</button>
+                            <input type="time" id="mgm-comercial-inicio" class="form-control form-control-sm" style="width:auto" value="{{ \App\Models\PageContent::get('agenda','comercial_inicio','08:00') }}" title="Início do horário comercial">
+                            <input type="time" id="mgm-comercial-fim" class="form-control form-control-sm" style="width:auto" value="{{ \App\Models\PageContent::get('agenda','comercial_fim','17:45') }}" title="Fim do horário comercial">
+                            <button class="btn btn-sm btn-outline-success" onclick="mgmPreset('comercial')">Horário comercial</button>
                             <button class="btn btn-sm btn-outline-primary" onclick="mgmPreset('tudo')">Selecionar tudo</button>
                             <button class="btn btn-sm btn-outline-secondary" onclick="mgmPreset('limpar')">Limpar tudo</button>
                         </div>
@@ -339,6 +341,7 @@
                     <div class="cal-header" style="justify-content:center; margin-bottom:10px">
                         <span id="mgm-cal-today" class="btn btn-sm btn-primary">Hoje</span>
                     </div>
+                    <div id="mgm-week-btns-top" class="d-flex flex-wrap gap-2 mb-2 justify-content-center"></div>
                     <div class="cal-semana">
                         <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div>
                         <div>Qui</div><div>Sex</div><div>Sab</div>
@@ -844,13 +847,7 @@
                                                     </div>
                                                 </div>
                                                 @if($isStaff)
-                                                    @if($consulta->servico?->retirada)
-                                                        <button class="btn btn-sm btn-outline-success ms-2"
-                                                                title="Avisar no WhatsApp que o pedido está pronto para retirada"
-                                                                onclick="event.stopPropagation(); avisarPedidoPronto({{ $consulta->id }}, this)">
-                                                            Avisar que o pedido está pronto
-                                                        </button>
-                                                    @elseif(!$consulta->confirmado)
+                                                    @if(!$consulta->confirmado)
                                                         <button class="btn btn-sm btn-success btn-confirmar ms-2"
                                                                 onclick="event.stopPropagation(); confirmarConsulta({{ $consulta->id }})">
                                                             Confirmar
@@ -918,7 +915,7 @@
                 lembrete_24h: @json($c->lembrete_24h),
                 lembrete_2h: @json($c->lembrete_2h),
                 user: { name: @json($c->user->name) },
-                servico: { descricao: @json($c->servico->descricao ?? ''), retirada: {{ $c->servico?->retirada ? 'true' : 'false' }} },
+                servico: { descricao: @json($c->servico->descricao ?? '') },
                 data_inicio: @json($c->data_inicio->format('Y-m-d H:i:s')),
                 data_fim: @json($c->data_fim->format('Y-m-d H:i:s')),
                 mes: @json(\Carbon\Carbon::parse($c->data_inicio)->locale('pt_BR')->translatedFormat('F Y')),
@@ -1122,20 +1119,7 @@
                 });
         }
 
-        // Serviços de retirada: avisa o cliente que o pedido está pronto (sem confirmação).
-        function avisarPedidoPronto(id, btn) {
-            const rotulo = 'Avisar que o pedido está pronto';
-            if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
-            axios.post(`/agenda/${id}/avisar-pedido-pronto`)
-                .then(() => {
-                    if (btn) { btn.textContent = 'Avisado ✓'; }
-                    setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = rotulo; } }, 2500);
-                })
-                .catch((e) => {
-                    if (btn) { btn.disabled = false; btn.textContent = rotulo; }
-                    alert(e.response?.data?.error ?? 'Erro ao enviar aviso de pedido pronto');
-                });
-        }
+        // (removido) fluxo "avisar pedido pronto" — o flag retirada não se aplica à barbearia.
 
         // ── Usuários ─────────────────────────────────────────────────────────
         function excluirUsuario(id, nome) {
@@ -1553,7 +1537,7 @@
             $('[name="status_servico"]').prop('checked', false);
             $(`#status_servico_${servico.status}`).prop('checked', true);
 
-            $('#retirada_edt_servico').prop('checked', !!servico.retirada);
+            $('#recorrente_edt_servico').prop('checked', !!servico.recorrente);
 
             $('#modal-edt-servico').modal('show');
         }
@@ -1633,11 +1617,9 @@
                 }
 
                 div.style.cursor = 'pointer';
-                div.onclick = () => {
-                    const mesF = String(mes + 1).padStart(2, '0');
-                    const diaF = String(d).padStart(2, '0');
-                    mgmAbrirModal(`${ano}-${mesF}-${diaF}`, passado);
-                };
+                const mesF = String(mes + 1).padStart(2, '0');
+                const diaF = String(d).padStart(2, '0');
+                div.onclick = () => mgmAbrirModal(`${ano}-${mesF}-${diaF}`, passado);
 
                 grid.appendChild(div);
             }
@@ -1654,6 +1636,49 @@
                     if (ds === 0 || ds === 6) div.classList.add('cal-fds');
                     grid.appendChild(div);
                 }
+            }
+
+            // Botões de semana acima do calendário (um por semana do mês; passadas desabilitadas).
+            const numLinhas = Math.ceil((inicioSemana + totalDias) / 7);
+            const semanas = [];
+            for (let i = 0; i < numLinhas; i++) {
+                const dom = new Date(ano, mes, 1 - inicioSemana + i * 7);
+                const sab = new Date(ano, mes, 1 - inicioSemana + i * 7 + 6);
+                semanas.push({ dom, sab, passado: sab < hoje });
+            }
+            mgmRenderBotoesSemanas(semanas);
+        }
+
+        // Botões "agenda da semana" ACIMA do calendário — um por semana do mês;
+        // semanas totalmente passadas (sábado < hoje) ficam desabilitadas.
+        function mgmRenderBotoesSemanas(semanas) {
+            const cont = document.getElementById('mgm-week-btns-top');
+            if (!cont) return;
+            cont.innerHTML = '';
+            const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const rot = d => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+            semanas.forEach(({ dom, sab, passado }) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-sm ' + (passado ? 'btn-outline-secondary' : 'btn-outline-primary') + ' mgm-btn-semana';
+                btn.textContent = `Semana ${rot(dom)}`;
+                btn.title = `${rot(dom)} – ${rot(sab)}`;
+                if (passado) { btn.disabled = true; }
+                else { btn.addEventListener('click', () => mgmAbrirSemana(iso(dom), btn)); }
+                cont.appendChild(btn);
+            });
+        }
+
+        async function mgmAbrirSemana(domingo, btn) {
+            const original = btn.textContent;
+            btn.disabled = true; btn.textContent = 'Enviando...';
+            try {
+                const { data } = await axios.post('/api/disponibilidade/semana/' + domingo);
+                alert('Semana preenchida (' + (data.inicio || '') + '–' + (data.fim || '') + ').\n\nPreenchidos: ' + data.preenchidos.length + '\nIgnorados (já configurados): ' + data.ignorados.length);
+                await mgmCarregarMes();
+            } catch (e) {
+                alert(e.response?.data?.error ?? 'Falha ao preencher a semana.');
+                btn.disabled = false; btn.textContent = original;
             }
         }
 
@@ -1751,14 +1776,22 @@
 
         function mgmPreset(tipo) {
             const checks = document.querySelectorAll('.mgm-slot-check:not(:disabled)');
+            let ini = null, fimV = null;
+            if (tipo === 'comercial') {
+                ini  = (document.getElementById('mgm-comercial-inicio') || {}).value || '08:00';
+                fimV = (document.getElementById('mgm-comercial-fim') || {}).value || '17:45';
+            }
             checks.forEach(cb => {
                 if (tipo === 'tudo')      cb.checked = true;
                 else if (tipo === 'limpar') cb.checked = false;
                 else if (tipo === 'comercial') {
-                    // 08:00 até 17:45 (última slot antes das 18:00, com intervalos de 15 min)
-                    cb.checked = cb.value >= '08:00' && cb.value <= '17:45';
+                    cb.checked = cb.value >= ini && cb.value <= fimV;
                 }
             });
+            // Salva o horário comercial editável (persiste no servidor)
+            if (tipo === 'comercial' && ini && fimV) {
+                axios.post('/api/agenda/horario-comercial', { inicio: ini, fim: fimV }).catch(() => {});
+            }
         }
 
         async function mgmSalvarSlots() {
@@ -1780,6 +1813,21 @@
         // Inicializar calendário de gestão ao carregar a página
         document.addEventListener('DOMContentLoaded', () => {
             mgmCarregarMes();
+
+            // Horário comercial: salva globalmente ao alterar os inputs (debounce 400ms).
+            let comercialTimer = null;
+            ['mgm-comercial-inicio', 'mgm-comercial-fim'].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('change', () => {
+                    clearTimeout(comercialTimer);
+                    comercialTimer = setTimeout(() => {
+                        const ini = (document.getElementById('mgm-comercial-inicio') || {}).value;
+                        const fim = (document.getElementById('mgm-comercial-fim') || {}).value;
+                        if (ini && fim) axios.post('/api/agenda/horario-comercial', { inicio: ini, fim: fim }).catch(() => {});
+                    }, 400);
+                });
+            });
 
             @if($errors->any() && old('data_inicio'))
                 // Repopula o select de serviços com os pacotes do cliente antes de reabrir
@@ -1878,11 +1926,9 @@
                                         </div>
                                     </div>
                                 </div>
-                                ${c.servico?.retirada
-                                    ? `<button class="btn btn-sm btn-outline-success ms-2" title="Avisar no WhatsApp que o pedido está pronto para retirada" onclick="event.stopPropagation(); avisarPedidoPronto(${c.id}, this)">Avisar que o pedido está pronto</button>`
-                                    : (!c.confirmado
-                                        ? `<button class="btn btn-sm btn-success btn-confirmar ms-2" onclick="event.stopPropagation(); confirmarConsulta(${c.id})">Confirmar</button><button class="btn btn-sm btn-outline-primary btn-reenviar ms-2" title="Reenviar pedido de confirmação no WhatsApp" onclick="event.stopPropagation(); reenviarLembrete(${c.id}, this)">Reenviar pedido de confirmação</button>`
-                                        : '')}
+                                ${!c.confirmado
+                                    ? `<button class="btn btn-sm btn-success btn-confirmar ms-2" onclick="event.stopPropagation(); confirmarConsulta(${c.id})">Confirmar</button><button class="btn btn-sm btn-outline-primary btn-reenviar ms-2" title="Reenviar pedido de confirmação no WhatsApp" onclick="event.stopPropagation(); reenviarLembrete(${c.id}, this)">Reenviar pedido de confirmação</button>`
+                                    : ''}
                                 <button class="btn btn-sm btn-danger ms-2"
                                     onclick="event.stopPropagation(); excluirConsultaById(${c.id})">
                                     <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#ffffff"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>

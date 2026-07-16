@@ -50,6 +50,32 @@
            número p/ mais contraste; diminua p/ ver mais a textura. */
         main > section { background-color: rgba(16,13,8,.60); }
 
+        /* ── Faixa Serviços → Agendar: card full-width, parallax, inner shadow, linha dourada ── */
+        .faixa-servicos {
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+            background-color: transparent; /* sobrepõe o véu default de main>section */
+            border-bottom: 3px solid var(--marrom); /* linha dourada na parte de baixo */
+        }
+        .faixa-bg {
+            position: absolute; left: 0; right: 0; top: -15%; height: 130%; z-index: 0;
+            background: url("{{ $heroBg }}") center/cover no-repeat;
+            will-change: transform; /* parallax via JS: translate + scale (zoom p/ mover sem borda) */
+        }
+        .faixa-overlay {
+            position: absolute; inset: 0; z-index: 1;
+            background: linear-gradient(180deg, rgba(16,13,8,.82), rgba(16,13,8,.68)); /* véu mais leve p/ ver a barbearia deslizando no fundo */
+            /* inner shadow (inset) nas bordas → profundidade de card */
+            box-shadow:
+                inset 0 55px 60px -30px rgba(0,0,0,.95),
+                inset 0 -55px 60px -30px rgba(0,0,0,.95),
+                inset 70px 0 90px -70px rgba(0,0,0,.85),
+                inset -70px 0 90px -70px rgba(0,0,0,.85);
+        }
+        .faixa-conteudo { position: relative; z-index: 2; }
+        /* parallax do .faixa-bg é feito em JS (translate + scale); funciona igual em desktop e mobile */
+
         /* ── Hero ─────────────────────────────────────────────────────── */
         .hero {
             position: relative;
@@ -79,7 +105,7 @@
         .hero-rotator { transform: rotate(-20deg) scale(1.75); display: flex; align-items: center; }
         .hero-track {
             display: flex; gap: 1.25rem; align-items: center;
-            animation: heroScroll 112s linear infinite;
+            animation: heroScroll 224s linear infinite;
             will-change: transform;
         }
         .hero-track img {
@@ -96,7 +122,6 @@
 
         @media (max-width: 768px) {
             .hero-rotator { transform: rotate(-20deg) scale(2.3); }
-            .hero-track { animation-duration: 80s; }
             .hero-track img { height: 48vh; width: 31vh; }
             .hero-logo { height: 190px; }
         }
@@ -109,7 +134,7 @@
         @media (max-width: 480px) { .galeria-grid { columns: 1; } }
     </style>
 
-    <!-- FRIOLI-BUILD: carrossel=112s/80s, angulo=-20deg (edite o CSS acima) -->
+    <!-- FRIOLI-BUILD: carrossel=224s (desktop e mobile), angulo=-20deg (edite o CSS acima) -->
     <!-- ── Hero ─────────────────────────────────────────────────────── -->
     <header class="hero text-white">
         <div class="hero-bg"></div>
@@ -152,9 +177,11 @@
         </div>
     </section>
 
-    <!-- ── Serviços ─────────────────────────────────────────────────── -->
-    <section id="servicos" class="py-5">
-        <div class="container text-center">
+    <!-- ── Faixa Serviços → Agendar (full-width, parallax, inner shadow, linha dourada) ── -->
+    <section id="servicos" class="faixa-servicos">
+        <div class="faixa-bg" aria-hidden="true"></div>
+        <div class="faixa-overlay" aria-hidden="true"></div>
+        <div class="container text-center faixa-conteudo py-5">
             <p class="mb-4 fs-2" style="color: var(--marrom);">{!! PageContent::get('servicos', 'titulo', 'Serviços') !!}</p>
             <div class="row g-3">
                 @foreach([1,2,3] as $i)
@@ -172,13 +199,7 @@
                 @endforeach
             </div>
             <p class="mt-4 text-secondary">{!! PageContent::get('servicos', 'nota', '') !!}</p>
-        </div>
-    </section>
-
-    <!-- ── CTA: Agendar (login p/ reservar/pacote) ────────────────── -->
-    <section id="cta-agendar" class="py-5">
-        <div class="container text-center">
-            <a href="{{ route('agendar.entrar') }}" class="btn btn-agendar btn-lg px-5 fw-semibold">Agende seu corte agora</a>
+            <a href="{{ route('agendar.entrar') }}" class="btn btn-agendar btn-lg px-5 fw-semibold mt-3">Agende seu corte agora</a>
         </div>
     </section>
 
@@ -228,4 +249,36 @@
             <a href="https://wa.me/{{ PageContent::get('contato', 'whatsapp_numero', '5511988245815') }}" target="_blank" class="btn btn-contato px-4">{!! PageContent::get('contato', 'whatsapp_label', 'Falar no WhatsApp') !!}</a>
         </div>
     </section>
+
+    {{-- Parallax do fundo da faixa Serviços: a imagem da barbearia desliza no fundo ao rolar. --}}
+    <script>
+    (function () {
+        const bg = document.querySelector('.faixa-servicos .faixa-bg');
+        if (!bg) return;
+        const section = bg.closest('.faixa-servicos') || bg.parentElement;
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        let ticking = false;
+
+        function update() {
+            const r = section.getBoundingClientRect();
+            const vh = window.innerHeight || document.documentElement.clientHeight;
+            // progresso de -1 (entrando por baixo) a +1 (saindo por cima)
+            const progress = (r.top + r.height / 2 - vh / 2) / ((vh + r.height) / 2);
+            const p = Math.max(-1, Math.min(1, progress));
+            const shift = -p * 10; // ±10% — mais lento que o conteúdo = parallax
+            bg.style.transform = 'translate3d(0,' + shift + '%,0) scale(1.08)'; // scale = zoom p/ não aparecer borda
+            ticking = false;
+        }
+
+        if (reduce || !window.matchMedia('(min-width: 769px)').matches) {
+            // mobile ou reduced-motion: fundo estático (parallax só no desktop)
+            bg.style.transform = 'scale(1.08)';
+        } else {
+            const onScroll = function () { if (!ticking) { requestAnimationFrame(update); ticking = true; } };
+            window.addEventListener('scroll', onScroll, { passive: true });
+            window.addEventListener('resize', onScroll, { passive: true });
+            update();
+        }
+    })();
+    </script>
 @endsection

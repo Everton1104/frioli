@@ -62,9 +62,9 @@ class AgendaController extends Controller
 
         $slots = [];
 
-        // Exibir das 06:00 às 22:00 em intervalos de 15 min (64 slots)
-        $cursor = Carbon::parse($data . ' 06:00');
-        $fim    = Carbon::parse($data . ' 22:00');
+        // Exibir das 00:00 às 23:45 em intervalos de 15 min (96 slots — dia inteiro)
+        $cursor = Carbon::parse($data . ' 00:00');
+        $fim    = Carbon::parse($data . ' 23:59');
 
         while ($cursor < $fim) {
             $hora         = $cursor->format('H:i');
@@ -96,6 +96,86 @@ class AgendaController extends Controller
         }
 
         return response()->json($slots);
+    }
+
+    // ── API: salvar o horário comercial padrão (início/fim editáveis) ─────────
+    public function salvarHorarioComercial(Request $request)
+    {
+        $user = auth()->user();
+        if (!$user || (!$user->adm && !$user->func)) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $data = $request->validate([
+            'inicio' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+            'fim'    => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+        ]);
+
+        foreach (['inicio' => 'comercial_inicio', 'fim' => 'comercial_fim'] as $campo => $key) {
+            \App\Models\PageContent::updateOrCreate(
+                ['section' => 'agenda', 'key' => $key],
+                ['value' => $data[$campo], 'type' => 'text', 'label' => "Agenda — horário comercial ($campo)"]
+            );
+        }
+
+        return response()->json(['ok' => true, 'inicio' => $data['inicio'], 'fim' => $data['fim']]);
+    }
+
+    // ── API: aplicar o horário comercial a uma semana inteira (dom→sáb) ───────
+    // Pula dias que já têm qualquer slot configurado. Agendamentos são outra tabela
+    // e nunca são tocados. Aditivo (não apaga) — respeita o unique(data,hora).
+    public function salvarSemana(Request $request, $domingo)
+    {
+        $user = auth()->user();
+        if (!$user || (!$user->adm && !$user->func)) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        try {
+            $base = Carbon::parse($domingo);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Data inválida.'], 422);
+        }
+        if (!$base->isSunday()) {
+            return response()->json(['error' => 'A data base precisa ser um domingo.'], 422);
+        }
+
+        $horaIni = \App\Models\PageContent::get('agenda', 'comercial_inicio', '08:00');
+        $horaFim = \App\Models\PageContent::get('agenda', 'comercial_fim', '17:45');
+        [$hI, $mI] = array_pad(explode(':', $horaIni), 2, '0');
+        [$hF, $mF] = array_pad(explode(':', $horaFim), 2, '0');
+        $cursor = Carbon::createFromTime((int) $hI, (int) $mI, 0);
+        $fim    = Carbon::createFromTime((int) $hF, (int) $mF, 0);
+        $slots  = [];
+        while ($cursor <= $fim) {
+            $slots[] = $cursor->format('H:i:s');
+            $cursor->addMinutes(15);
+        }
+
+        $preenchidos = [];
+        $ignorados   = [];
+        for ($i = 0; $i < 7; $i++) {
+            $dia = $base->copy()->addDays($i)->toDateString();
+            if (DisponibilidadeModel::where('data', $dia)->exists()) {
+                $ignorados[] = $dia;
+                continue;
+            }
+            foreach ($slots as $hora) {
+                DisponibilidadeModel::firstOrCreate(
+                    ['data' => $dia, 'hora' => $hora],
+                    ['created_by' => $user->id]
+                );
+            }
+            $preenchidos[] = $dia;
+        }
+
+        return response()->json([
+            'ok'          => true,
+            'preenchidos' => $preenchidos,
+            'ignorados'   => $ignorados,
+            'inicio'      => $horaIni,
+            'fim'         => $horaFim,
+        ]);
     }
 
     // ── API: salvar/substituir todos os slots de um dia ──────────────────────
@@ -533,10 +613,6 @@ class AgendaController extends Controller
         $phoneId     = env('PHONE_NUMBER_ID');
         $template    = env('WHATSAPP_TEMPLATE_LEMBRETE');
 
-        // Serviço de retirada não pede confirmação: usa o aviso de "pedido pronto".
-        if ($agendamento->servico?->retirada) {
-            return response()->json(['error' => 'Serviço de retirada não usa pedido de confirmação. Use "Avisar que o pedido está pronto".'], 422);
-        }
         if (!$cliente || !$cliente->whatsapp) {
             return response()->json(['error' => 'Cliente sem WhatsApp cadastrado.'], 422);
         }
@@ -571,46 +647,6 @@ class AgendaController extends Controller
             ['agendamento_id' => $agendamento->id, 'tipo' => '24h'],
             ['status' => 'enviado', 'erro_msg' => null],
         );
-
-        return response()->json(['ok' => true]);
-    }
-
-    // Avisa o cliente que o pedido está pronto para retirada (serviços de retirada).
-    // Disparo manual pelo staff; usa template UTILITY (sem botões de confirmação).
-    public function avisarPedidoPronto($id)
-    {
-        $user = auth()->user();
-        if (!$user->adm && !$user->func) {
-            return response()->json(['error' => 'Não autorizado'], 403);
-        }
-
-        $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
-        $cliente     = $agendamento->user;
-        $phoneId     = env('PHONE_NUMBER_ID');
-        $template    = env('WHATSAPP_TEMPLATE_RETIRADA');
-
-        if (!$agendamento->servico?->retirada) {
-            return response()->json(['error' => 'Este serviço não é de retirada.'], 422);
-        }
-        if (!$cliente || !$cliente->whatsapp) {
-            return response()->json(['error' => 'Cliente sem WhatsApp cadastrado.'], 422);
-        }
-        if (!$phoneId || !$template) {
-            return response()->json(['error' => 'Template de retirada não configurado (WHATSAPP_TEMPLATE_RETIRADA).'], 422);
-        }
-
-        $nome = ucfirst($cliente->name);
-        $data = Carbon::parse($agendamento->data_inicio)->format('d/m/Y');
-
-        // Template (pt_BR): "Olá {{1}}, seu pedido está pronto para ser retirado na data {{2}}. Aguardamos você!"
-        $resultado = WhatsappController::enviarModelo($phoneId, $cliente->whatsapp, $template, [
-            ['type' => 'text', 'text' => $nome],
-            ['type' => 'text', 'text' => $data],
-        ], 'pt_BR');
-
-        if (isset($resultado['erro'])) {
-            return response()->json(['error' => $resultado['msg'] ?? 'Falha ao enviar aviso.'], 422);
-        }
 
         return response()->json(['ok' => true]);
     }

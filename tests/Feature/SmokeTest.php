@@ -15,7 +15,7 @@ use Tests\TestCase;
 /**
  * Smoke test ponta-a-ponta do port anavertuan -> frioli.
  * Usa a conexão mysql real (DB já migrado), NÃO sqlite — porque a migration
- * add_retirada usa ->after() (MySQL-only). Roda contra o banco 'frioli'.
+ * add_retirada (coluna hoje renomeada para 'recorrente') usa ->after() (MySQL-only). Roda contra o banco 'frioli'.
  */
 class SmokeTest extends TestCase
 {
@@ -132,7 +132,7 @@ class SmokeTest extends TestCase
         $outro   = User::factory()->create(['adm' => 0, 'func' => 0, 'whatsapp' => '5511988245902', 'whatsapp_verified_at' => now()]);
         $servico = ServicosModel::create([
             'descricao' => 'Corte smoke ' . uniqid(), 'duracao' => '00:30:00', 'status' => 1,
-            'excluido' => 0, 'visivel_cliente' => 1, 'retirada' => 0, 'valor' => 50.00,
+            'excluido' => 0, 'visivel_cliente' => 1, 'recorrente' => 0, 'valor' => 50.00,
         ]);
         $data  = now()->addDays(3)->toDateString();
         $slots = [];
@@ -179,7 +179,7 @@ class SmokeTest extends TestCase
         $cliente = User::factory()->create(['adm' => 0, 'func' => 0]);
         $servico = ServicosModel::create([
             'descricao' => 'Corte recusa ' . uniqid(), 'duracao' => '00:30:00', 'status' => 1,
-            'excluido' => 0, 'visivel_cliente' => 1, 'retirada' => 0, 'valor' => 40.00,
+            'excluido' => 0, 'visivel_cliente' => 1, 'recorrente' => 0, 'valor' => 40.00,
         ]);
         $inicio = now()->addDays(4);
         $ag = AgendamentoModel::create([

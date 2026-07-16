@@ -41,7 +41,7 @@ class ServicoController extends Controller
             'descricao'       => $request->descricao,
             'duracao'         => $request->duracao_h . ':' . $request->duracao_m . ':00',
             'visivel_cliente' => $visivelCliente,
-            'retirada'        => $request->boolean('retirada'),
+            'recorrente'      => $request->boolean('recorrente'),
             'valor'           => $request->filled('valor') ? $request->valor : null,
         ]);
 
@@ -116,7 +116,7 @@ class ServicoController extends Controller
             'duracao'         => $request['duracao_h_edt_servico'] . ':' . $request['duracao_m_edt_servico'] . ':00',
             'status'          => $request['status_servico'],
             'visivel_cliente' => $visivelCliente,
-            'retirada'        => $request->boolean('retirada_edt_servico'),
+            'recorrente'      => $request->boolean('recorrente_edt_servico'),
             'valor'           => $request->filled('valor_edt_servico') ? $request->valor_edt_servico : null,
         ]);
 

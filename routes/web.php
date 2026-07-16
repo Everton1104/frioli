@@ -93,6 +93,8 @@ Route::get('/api/horarios/{data}', [AgendaController::class, 'horarios']);
 Route::get('/api/dias-disponiveis/{ano}/{mes}', [AgendaController::class, 'diasDisponiveis']);
 Route::get('/api/disponibilidade/{data}', [AgendaController::class, 'getSlotsDia'])->middleware('auth');
 Route::post('/api/disponibilidade/{data}', [AgendaController::class, 'salvarSlots'])->middleware('auth');
+Route::post('/api/agenda/horario-comercial', [AgendaController::class, 'salvarHorarioComercial'])->middleware('auth');
+Route::post('/api/disponibilidade/semana/{domingo}', [AgendaController::class, 'salvarSemana'])->middleware('auth');
 
 Route::post('add-usuario', [RegisteredUserController::class, 'store'])->middleware(['auth', 'verified'])->name('add-usuario');
 Route::post('delete-usuario', [RegisteredUserController::class, 'delete'])->middleware('auth')->name('delete-usuario');
@@ -109,7 +111,6 @@ Route::resource('agenda', AgendaController::class)->middleware('auth');
 Route::post('agenda/{id}/confirmar', [AgendaController::class, 'confirmar'])->middleware('auth')->name('agenda.confirmar');
 Route::post('agenda/{id}/recusar',   [AgendaController::class, 'recusar'])->middleware('auth')->name('agenda.recusar');
 Route::post('agenda/{id}/reenviar-lembrete', [AgendaController::class, 'reenviarLembrete'])->middleware('auth')->name('agenda.reenviar-lembrete');
-Route::post('agenda/{id}/avisar-pedido-pronto', [AgendaController::class, 'avisarPedidoPronto'])->middleware('auth')->name('agenda.avisar-pedido-pronto');
 Route::post('aviso/{id}/dispensar', [AgendaController::class, 'dispensarAviso'])->middleware('auth')->name('aviso.dispensar');
 Route::get('avisos-parcial', [AgendaController::class, 'avisosParcial'])->middleware('auth')->name('avisos.parcial');
 Route::get('agenda-search', [AgendaController::class, 'search'])->middleware('auth')->name('agenda.search');

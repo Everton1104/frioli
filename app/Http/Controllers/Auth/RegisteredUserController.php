@@ -100,6 +100,11 @@ class RegisteredUserController extends Controller
             return redirect()->back()->with('msgErro', 'Usuário não encontrado!');
         }
 
+        // Super admin (id=1) só pode ser editado por ele mesmo.
+        if ((int) $user->id === 1 && (int) auth()->id() !== 1) {
+            return redirect()->back()->with('msgErro', 'O super admin só pode ser editado por ele mesmo.');
+        }
+
         if ($request->filled('senha_edt')) {
             if ($request['senha_edt'] != $request['senha_confirmation_edt']) {
                 return redirect()->back()->with('msgErro', 'Senhas não conferem!');

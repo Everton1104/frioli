@@ -7,9 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 class ServicosModel extends Model
 {
     protected $table = 'servicos';
-    protected $fillable = ['descricao', 'duracao', 'status', 'excluido', 'visivel_cliente', 'retirada', 'valor'];
+    protected $fillable = ['descricao', 'duracao', 'status', 'excluido', 'visivel_cliente', 'recorrente', 'valor'];
 
-    protected $casts = ['retirada' => 'boolean', 'valor' => 'float'];
+    protected $casts = ['recorrente' => 'boolean', 'valor' => 'float'];
 
     public function agendamentos()
     {
