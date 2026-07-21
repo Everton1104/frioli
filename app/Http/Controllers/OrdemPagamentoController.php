@@ -79,6 +79,7 @@ class OrdemPagamentoController extends Controller
             'dia_semana'     => ['required', 'integer', 'between:0,6'],
             'hora'           => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
             'mes'            => ['required', 'date'],
+            'recorrente'     => ['nullable', 'boolean'],
         ], [
             'user_id.exists'         => 'Cliente inválido.',
             'servico_id.required'    => 'Selecione o serviço.',
@@ -130,7 +131,9 @@ class OrdemPagamentoController extends Controller
             return redirect()->back()->withErrors(['funcionario_id' => 'Esse horário fixo já foi reservado para este barbeiro neste mês. Escolha outro horário.'])->withInput();
         }
 
-        $ordem = DB::transaction(function () use ($cliente, $servico, $funcionario, $dados, $mes, $hora, $calc) {
+        // Cria o plano do mês-alvo + ordem de pagamento (link avulso). Se marcado
+        // "recorrente", o command mensal (RenovarPlanosMensais) gera o próximo mês.
+        $ordem = DB::transaction(function () use ($cliente, $servico, $funcionario, $dados, $mes, $hora, $calc, $request) {
             $plano = \App\Models\PlanoMensal::create([
                 'user_id'         => $cliente->id,
                 'servico_id'      => $servico->id,
@@ -142,6 +145,7 @@ class OrdemPagamentoController extends Controller
                 'unidades_usadas' => 0,
                 'valor_total'     => $calc['valor_total'],
                 'status'          => \App\Models\PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO,
+                'recorrente'      => $request->boolean('recorrente'),
             ]);
 
             $o = OrdemPagamento::create([

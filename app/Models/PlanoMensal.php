@@ -31,6 +31,7 @@ class PlanoMensal extends Model
     protected $fillable = [
         'user_id', 'servico_id', 'funcionario_id', 'dia_semana', 'hora', 'mes',
         'unidades_total', 'unidades_usadas', 'valor_total', 'status', 'ordem_pagamento_id',
+        'recorrente',
     ];
 
     protected $casts = [
@@ -38,6 +39,7 @@ class PlanoMensal extends Model
         'valor_total'     => 'decimal:2',
         'unidades_total'  => 'integer',
         'unidades_usadas' => 'integer',
+        'recorrente'      => 'boolean',
     ];
 
     public function user()

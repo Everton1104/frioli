@@ -40,3 +40,8 @@ Schedule::command('agendamentos:expirar-pendentes')
 
 // Fim do mês: planos mensais com unidades não usadas → expiram (Negociar).
 Schedule::command('planos:expirar')->dailyAt('03:17')->withoutOverlapping();
+
+// Renovação mensal: nos últimos 10 dias do mês gera o próximo mês dos planos
+// recorrentes ativos (link avulso) e avisa o cliente pagar. O próprio command
+// checa a janela e é idempotente.
+Schedule::command('planos:renovar')->dailyAt('04:00')->withoutOverlapping();

@@ -438,7 +438,10 @@
                         @forelse($planos as $pl)
                         <tr>
                             <td>{{ $pl->user->name ?? '—' }}</td>
-                            <td>{{ $pl->servico->descricao ?? '—' }}</td>
+                            <td>
+                                {{ $pl->servico->descricao ?? '—' }}
+                                @if($pl->recorrente) <span class="badge text-bg-info" title="Renovação automática mensal (link)">🔁 Recorrente</span>@endif
+                            </td>
                             <td>{{ $pl->funcionario->name ?? '—' }}</td>
                             <td>{{ ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][$pl->dia_semana] ?? '' }} {{ \Carbon\Carbon::parse($pl->hora)->format('H:i') }}</td>
                             <td>{{ \Carbon\Carbon::parse($pl->mes)->format('m/Y') }}</td>
@@ -612,6 +615,12 @@
                 <div class="form-text mt-2">
                     Valor total: <strong id="plano_valor_total">—</strong>
                     <span id="plano_unidades" class="text-muted"></span>
+                </div>
+                <div class="form-check mt-3">
+                    <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="plano_recorrente" {{ old('recorrente') ? 'checked' : '' }}>
+                    <label class="form-check-label" for="plano_recorrente">
+                        Recorrente — o sistema <strong>renova sozinho</strong> a cada mês: gera a cobrança do próximo mês (link) e avisa o cliente pagar. Não é cartão salvo.
+                    </label>
                 </div>
             </form>
         </x-app.modal>
@@ -846,6 +855,34 @@
                     <div class="text-muted small">Escolha o barbeiro, o serviço, o dia e o horário e pague pelo site.</div>
                 </div>
                 <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
+            </div>
+        </div>
+        @endif
+
+        {{-- Pacotes mensais disponíveis: oferta visível ao cliente (aquisição só na barbearia) --}}
+        @php
+            $pacotesMensais = $servicos->where('recorrente', 1)
+                ->where('visivel_cliente', 1)->where('status', 1)->where('valor', '>', 0)->values();
+        @endphp
+        @if($pacotesMensais->isNotEmpty())
+        <div class="card shadow my-3">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                Pacotes mensais disponíveis <span class="badge text-bg-light">na barbearia</span>
+            </div>
+            <div class="card-body p-3">
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    @foreach($pacotesMensais as $pm)
+                        <div class="border rounded px-3 py-2 small">
+                            <strong>{{ $pm->descricao }}</strong>
+                            <div class="text-muted">R$ {{ number_format($pm->valor, 2, ',', '.') }} / corte · horário fixo semanal</div>
+                        </div>
+                    @endforeach
+                </div>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <span class="text-muted small">Aquisição apenas presencialmente na barbearia.</span>
+                    <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
+                       href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero saber mais sobre o pacote mensal.') }}">Quero assinar</a>
+                </div>
             </div>
         </div>
         @endif
