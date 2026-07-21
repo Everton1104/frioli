@@ -43,7 +43,7 @@ class MercadoPagoService
             'installments'       => $installments,
             'payment_method_id'  => $dadosBrick['payment_method_id'],
             'payer'              => [
-                'email' => $dadosBrick['payer_email'] ?? ('paciente.' . $ordem->user_id . '@exemplo.com'),
+                'email' => $dadosBrick['payer_email'] ?? ('cliente.' . $ordem->user_id . '@exemplo.com'),
             ],
             'external_reference' => (string) $ordem->external_reference,
             'statement_descriptor' => (string) config('services.mercadopago.statement_descriptor', config('app.name')),

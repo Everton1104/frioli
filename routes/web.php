@@ -33,10 +33,13 @@ Route::middleware('guest')->prefix('agendar')->name('agendar.')->group(function 
 });
 
 // O booking em si (cliente autenticado e com WhatsApp verificado).
+// Só agendamento avulso: planos mensais são criados pelo staff (OrdemPagamentoController).
 Route::middleware(['auth', 'whatsapp.verified'])->prefix('agendar')->name('agendar.')->group(function () {
     Route::get('/',            [AgendaPublicaController::class, 'index'])->name('index');
     Route::post('/reservar',   [AgendaPublicaController::class, 'reservar'])->name('reservar');
 });
+
+Route::get('/api/mensal/calcular', [AgendaPublicaController::class, 'mensalCalcular']);
 
 Route::get('/dashboard', function () {
     $user     = auth()->user();
@@ -52,14 +55,26 @@ Route::get('/dashboard', function () {
 
     $consultasQuery = AgendamentoModel::with([
         'user',
+        'funcionario',
         'servico',
         'lembretes',
         'creditoServico' => fn($q) => $q->with(['servico', 'agendamentos:id,credito_servico_id'])->withCount('agendamentos'),
     ])->where('data_inicio', '>=', $inicioJanela)->orderBy('data_inicio');
 
+    // Escopo por papel: cliente → seus agendamentos; barbeiro (func) → só a própria
+    // agenda; admin → todos (ou filtra por um barbeiro via ?barbeiro=ID).
+    $barbeiroSelecionado = null;
     if (!$user->adm && !$user->func) {
         $consultasQuery->where('user_id', $user->id);
+    } elseif ($user->func) {
+        $consultasQuery->where('funcionario_id', $user->id);
+    } elseif (request('barbeiro')) {
+        $barbeiroSelecionado = (int) request('barbeiro');
+        $consultasQuery->where('funcionario_id', $barbeiroSelecionado);
     }
+
+    // Lista de barbeiros para o seletor/filtro (admin) e para o agendamento pelo staff.
+    $barbeiros = User::barbeiros()->get();
 
     $hoje      = now()->toDateString();
     $consultas = $consultasQuery->get()->groupBy([
@@ -80,13 +95,37 @@ Route::get('/dashboard', function () {
         : collect();
 
     // Booking público: agendamentos pagos aguardando confirmação do staff.
+    // Barbeiro vê só os seus; admin pode estar filtrando por um barbeiro.
     $pendentes = ($user->adm || $user->func)
         ? AgendamentoModel::with(['user', 'servico'])
             ->where('status', AgendamentoModel::STATUS_PAGO_AGUARDANDO)
+            ->when($user->func, fn($q) => $q->where('funcionario_id', $user->id))
+            ->when($barbeiroSelecionado, fn($q) => $q->where('funcionario_id', $barbeiroSelecionado))
             ->orderBy('data_inicio')->get()
         : collect();
 
-    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'ordensPagamento', 'minhasOrdens', 'pendentes'));
+    // Clientes penalizados (no-show) — staff (adm/func) pode remover a penalidade.
+    $penalizados = ($user->adm || $user->func)
+        ? User::where('penalizado', 1)->where('excluido', 0)->orderByDesc('penalizado_em')->get()
+        : collect();
+
+    // Pacotes do cliente (tela "Meus pacotes" — validade/Negociar).
+    $meusCreditos = (!$user->adm && !$user->func)
+        ? \App\Models\CreditoServico::with('servico')->withCount('agendamentos')
+            ->where('user_id', $user->id)->orderByDesc('id')->get()
+        : collect();
+
+    $whatsappAdmin = \App\Models\PageContent::get('contato', 'whatsapp_numero', '5511988245815');
+
+    // Planos mensais (Fase C): staff vê todos; cliente vê os seus.
+    $planos = ($user->adm || $user->func)
+        ? \App\Models\PlanoMensal::with(['user:id,name', 'servico:id,descricao', 'funcionario:id,name'])->latest()->limit(50)->get()
+        : collect();
+    $meusPlanos = (!$user->adm && !$user->func)
+        ? \App\Models\PlanoMensal::with(['servico:id,descricao', 'funcionario:id,name'])->where('user_id', $user->id)->latest()->get()
+        : collect();
+
+    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'ordensPagamento', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos'));
 })->middleware(['auth', 'verified', 'whatsapp.verified'])->name('dashboard');
 
 Route::get('/api/horarios/{data}', [AgendaController::class, 'horarios']);
@@ -111,6 +150,8 @@ Route::resource('agenda', AgendaController::class)->middleware('auth');
 Route::post('agenda/{id}/confirmar', [AgendaController::class, 'confirmar'])->middleware('auth')->name('agenda.confirmar');
 Route::post('agenda/{id}/recusar',   [AgendaController::class, 'recusar'])->middleware('auth')->name('agenda.recusar');
 Route::post('agenda/{id}/reenviar-lembrete', [AgendaController::class, 'reenviarLembrete'])->middleware('auth')->name('agenda.reenviar-lembrete');
+Route::post('agenda/{id}/comparecimento', [AgendaController::class, 'comparecimento'])->middleware('auth')->name('agenda.comparecimento');
+Route::post('usuario/{id}/remover-penalidade', [AgendaController::class, 'removerPenalidade'])->middleware('auth')->name('usuario.remover-penalidade');
 Route::post('aviso/{id}/dispensar', [AgendaController::class, 'dispensarAviso'])->middleware('auth')->name('aviso.dispensar');
 Route::get('avisos-parcial', [AgendaController::class, 'avisosParcial'])->middleware('auth')->name('avisos.parcial');
 Route::get('agenda-search', [AgendaController::class, 'search'])->middleware('auth')->name('agenda.search');
@@ -196,6 +237,7 @@ Route::middleware('auth')->group(function () {
 Route::middleware('auth')->group(function () {
     // Staff (adm/func) — criar/cancelar/excluir ordens (autorização no controller).
     Route::post('/ordens-pagamento',               [OrdemPagamentoController::class, 'store'])->name('ordens.store');
+    Route::post('/planos-mensais',                 [OrdemPagamentoController::class, 'mensalStore'])->name('planos.store');
     Route::post('/ordens-pagamento/{id}/cancelar', [OrdemPagamentoController::class, 'cancelar'])->name('ordens.cancelar');
     Route::delete('/ordens-pagamento/{id}',        [OrdemPagamentoController::class, 'destroy'])->name('ordens.destroy');
     // Paciente — tela de checkout (GET) e criação do link de pagamento (POST, throttle).

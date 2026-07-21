@@ -24,6 +24,7 @@ class OrdemPagamento extends Model
         'user_id',
         'criado_por',
         'agendamento_id',
+        'plano_mensal_id',
         'valor',
         'taxa_mp',
         'valor_liquido',

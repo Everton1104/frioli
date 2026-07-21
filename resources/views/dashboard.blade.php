@@ -21,6 +21,9 @@
         .consulta-especial {
             border-left-color: #dc3545;
         }
+        .consulta-mensal {
+            border-left-color: #0d6efd;
+        }
         .consulta-data {
             font-weight: bold;
             font-size: 1.1rem;
@@ -138,6 +141,7 @@
             </form>
         </x-app.modal>
 
+        @if(auth()->user()->adm)
         {{-- Contas de usuário --}}
         <div class="card shadow my-3">
             <div class="card-header"
@@ -171,7 +175,7 @@
                             <tbody id="tbody-usuarios">
                                 @foreach ($users as $user)
                                     <tr>
-                                        @if ($user->adm != 1 || Auth()->user()->id == 1)
+                                        @if ($user->id != 1 || Auth()->user()->id == 1)
                                             @if ($user->func != 1 || Auth()->user()->adm == 1)
                                                 <td class="d-flex">
                                                     <svg style="cursor: pointer" onclick="excluirUsuario({{$user->id}},'{{$user->name}}')" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#dc3545"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
@@ -198,6 +202,7 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- Modal Adicionar Serviços --}}
         <x-app.modal id="modal-add-servico" title="Adicionar Novo Serviço" :btn="[['lbl' => 'Adicionar', 'color' => 'primary', 'onclick' => '$(\'#form-add-servico\').submit()']]">
@@ -211,7 +216,7 @@
                 <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor" id="servico_valor" step="0.01" min="0" placeholder="Ex.: 50.00" />
                 <div class="form-check mt-3">
                     <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="servico_recorrente">
-                    <label class="form-check-label" for="servico_recorrente">Serviço recorrente / assinatura (não agendável individualmente)</label>
+                    <label class="form-check-label" for="servico_recorrente">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
                 </div>
             </form>
         </x-app.modal>
@@ -235,7 +240,7 @@
                 />
                 <div class="form-check mt-3">
                     <input class="form-check-input" type="checkbox" value="1" name="recorrente_edt_servico" id="recorrente_edt_servico">
-                    <label class="form-check-label" for="recorrente_edt_servico">Serviço recorrente / assinatura (não agendável individualmente)</label>
+                    <label class="form-check-label" for="recorrente_edt_servico">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
                 </div>
             </form>
         </x-app.modal>
@@ -250,6 +255,7 @@
             </form>
         </x-app.modal>
 
+        @if(auth()->user()->adm)
         {{-- Serviços --}}
         <div class="card shadow my-3">
             <div class="card-header"
@@ -270,6 +276,7 @@
                                     <th scope="col">&nbsp;</th>
                                     <th scope="col">Serviço</th>
                                     <th scope="col">Duração</th>
+                                    <th scope="col">Valor</th>
                                     <th scope="col">Status</th>
                                 </tr>
                             </thead>
@@ -281,9 +288,10 @@
                                             <svg style="cursor: pointer" onclick="editarServico('{{$servico->id}}')" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
                                         </td>
                                         <td>{{ $servico->descricao }}
-                                            @if($servico->recorrente)<span class="badge bg-secondary ms-1">Recorrente</span>@endif
+                                            @if($servico->recorrente)<span class="badge bg-secondary ms-1">Mensal</span>@endif
                                         </td>
                                         <td>{{ $servico->duracao }}</td>
+                                        <td>{{ $servico->valor ? 'R$ ' . number_format($servico->valor, 2, ',', '.') : '—' }}</td>
                                         <td class="text-{{ $servico->status == 0 ? 'danger' : 'success' }}">{{ $servico->status == 0 ? 'INATIVO' : 'ATIVO' }}</td>
                                     </tr>
                                 @endforeach
@@ -293,6 +301,7 @@
                 </div>
             </div>
         </div>
+        @endif
 
         {{-- Modal: Gerenciar slots de um dia --}}
         <div class="modal fade" id="modal-gerenciar-slots" tabindex="-1">
@@ -329,6 +338,19 @@
         <div class="card shadow my-3">
             <div class="card-header">Gerenciar Disponibilidade da Agenda</div>
             <div class="card-body p-3">
+                <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+                    <span class="text-muted small">Barbeiro:</span>
+                    @if(auth()->user()->func)
+                        <input type="hidden" id="mgm-barbeiro" value="{{ auth()->user()->id }}">
+                        <strong>{{ auth()->user()->name }}</strong>
+                    @else
+                        <select id="mgm-barbeiro" class="form-select form-select-sm" style="width:auto" onchange="mgmCarregarMes()">
+                            @foreach($barbeiros as $b)
+                                <option value="{{ $b->id }}" @selected((string) $barbeiroSelecionado === (string) $b->id)>{{ $b->name }}</option>
+                            @endforeach
+                        </select>
+                    @endif
+                </div>
                 <p class="text-muted small mb-3">Clique em um dia para definir quais horários estão disponíveis.</p>
 
                 {{-- Calendário de gestão (sempre visível) --}}
@@ -351,8 +373,8 @@
 
                 {{-- Legenda --}}
                 <div class="d-flex gap-3 mt-3 justify-content-center flex-wrap">
-                    <span><span style="display:inline-block;width:14px;height:14px;background:#e9f7ef;border-radius:3px;vertical-align:middle"></span> Com horários</span>
-                    <span><span style="display:inline-block;width:14px;height:14px;background:#f8d7da;border-radius:3px;vertical-align:middle"></span> Sem horários</span>
+                    <span><span style="display:inline-block;width:14px;height:14px;background:#16a34a;border-radius:3px;vertical-align:middle"></span> Com horários</span>
+                    <span><span style="display:inline-block;width:14px;height:14px;background:#dc2626;border-radius:3px;vertical-align:middle"></span> Sem horários</span>
                     <span><span style="display:inline-block;width:14px;height:14px;background:#f1f1f1;opacity:.4;border-radius:3px;vertical-align:middle"></span> Passado</span>
                 </div>
             </div>
@@ -373,6 +395,71 @@
                 </div>
             </div>
         </div>
+
+        {{-- Clientes penalizados (no-show) — adm/func podem remover a penalidade --}}
+        @if($penalizados->isNotEmpty())
+        <div class="card shadow my-3 border-danger">
+            <div class="card-header fw-bold" style="background: rgba(220,53,69,.15)">
+                ⛔ Clientes penalizados ({{ $penalizados->count() }})
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead><tr><th>Cliente</th><th>WhatsApp</th><th>Desde</th><th class="text-end">Ação</th></tr></thead>
+                    <tbody>
+                        @foreach($penalizados as $pen)
+                        <tr data-penalizado="{{ $pen->id }}">
+                            <td>{{ $pen->name }}</td>
+                            <td>{{ $pen->whatsapp }}</td>
+                            <td>{{ $pen->penalizado_em ? \Carbon\Carbon::parse($pen->penalizado_em)->format('d/m/Y H:i') : '—' }}</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-success" onclick="removerPenalidade({{ $pen->id }}, {{ json_encode($pen->name) }})">Remover penalidade</button>
+                            </td>
+                        </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        @endif
+
+        {{-- Planos mensais (horários fixos) --}}
+        @if(auth()->user()->adm || $planos->isNotEmpty())
+        <div class="card shadow my-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Planos mensais (horários fixos)</span>
+                @if(auth()->user()->adm)
+                <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#modal-add-plano" style="background-color: var(--marrom); color:#1a1410">Novo plano</button>
+                @endif
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead><tr><th>Cliente</th><th>Serviço</th><th>Barbeiro</th><th>Slot fixo</th><th>Mês</th><th>Unidades</th><th>Status</th></tr></thead>
+                    <tbody>
+                        @forelse($planos as $pl)
+                        <tr>
+                            <td>{{ $pl->user->name ?? '—' }}</td>
+                            <td>{{ $pl->servico->descricao ?? '—' }}</td>
+                            <td>{{ $pl->funcionario->name ?? '—' }}</td>
+                            <td>{{ ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][$pl->dia_semana] ?? '' }} {{ \Carbon\Carbon::parse($pl->hora)->format('H:i') }}</td>
+                            <td>{{ \Carbon\Carbon::parse($pl->mes)->format('m/Y') }}</td>
+                            <td>{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }}</td>
+                            <td>
+                                @if($pl->status === 'ativo') <span class="badge bg-success">Ativo</span>
+                                @elseif($pl->status === 'aguardando_pagamento') <span class="badge bg-warning text-dark">Aguardando pgto</span>
+                                @elseif($pl->status === 'consumido') <span class="badge bg-secondary">Consumido</span>
+                                @elseif($pl->status === 'expirado') <span class="badge bg-danger">{{ $pl->restantes() }} a negociar</span>
+                                @else <span class="badge bg-secondary">{{ $pl->status }}</span>
+                                @endif
+                            </td>
+                        </tr>
+                        @empty
+                            <tr><td colspan="7" class="text-muted text-center">Nenhum plano mensal.</td></tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        @endif
 
         {{-- Booking público: pedidos pagos aguardando confirmação --}}
         @if((auth()->user()->adm || auth()->user()->func) && $pendentes->isNotEmpty())
@@ -431,7 +518,7 @@
                 @csrf
                 @method('post')
                 <div class="mb-3">
-                    <label for="ordem_user_id" class="form-label">Paciente</label>
+                    <label for="ordem_user_id" class="form-label">Cliente</label>
                     <select name="user_id" id="ordem_user_id" class="form-select {{ $errors->has('user_id') ? 'is-invalid' : '' }}" required>
                         <option value="">Selecione...</option>
                         @foreach ($clientes as $cliente)
@@ -465,6 +552,96 @@
             </form>
         </x-app.modal>
 
+        {{-- Modal: Novo plano mensal (horário fixo semanal) --}}
+        <x-app.modal id="modal-add-plano" title="Novo plano mensal" :btn="[['lbl' => 'Criar plano', 'color' => 'primary', 'onclick' => '$(\'#form-add-plano\').submit()']]">
+            <form method="POST" id="form-add-plano" action="{{ route('planos.store') }}" novalidate>
+                @csrf
+                @method('post')
+                <div class="mb-3">
+                    <label for="plano_user_id" class="form-label">Cliente</label>
+                    <select name="user_id" id="plano_user_id" class="form-select {{ $errors->has('user_id') ? 'is-invalid' : '' }}" required>
+                        <option value="">Selecione...</option>
+                        @foreach ($clientes as $cliente)
+                            <option value="{{ $cliente->id }}" @selected(old('user_id') == $cliente->id)>{{ $cliente->name }}</option>
+                        @endforeach
+                    </select>
+                    @error('user_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                </div>
+                <div class="mb-3">
+                    <label for="plano_servico_id" class="form-label">Serviço mensal</label>
+                    <select name="servico_id" id="plano_servico_id" class="form-select {{ $errors->has('servico_id') ? 'is-invalid' : '' }}" required>
+                        <option value="">Selecione...</option>
+                        @foreach ($servicos->where('recorrente', 1) as $s)
+                            <option value="{{ $s->id }}" @selected(old('servico_id') == $s->id)>{{ $s->descricao }} — R$ {{ number_format($s->valor, 2, ',', '.') }}</option>
+                        @endforeach
+                    </select>
+                    @error('servico_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                </div>
+                <div class="mb-3">
+                    <label for="plano_funcionario_id" class="form-label">Barbeiro</label>
+                    <select name="funcionario_id" id="plano_funcionario_id" class="form-select {{ $errors->has('funcionario_id') ? 'is-invalid' : '' }}" required>
+                        <option value="">Selecione...</option>
+                        @foreach ($barbeiros as $b)
+                            <option value="{{ $b->id }}" @selected(old('funcionario_id') == $b->id)>{{ $b->name }}</option>
+                        @endforeach
+                    </select>
+                    @error('funcionario_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label for="plano_dia_semana" class="form-label">Dia da semana</label>
+                        <select name="dia_semana" id="plano_dia_semana" class="form-select {{ $errors->has('dia_semana') ? 'is-invalid' : '' }}" required>
+                            <option value="">Selecione...</option>
+                            @foreach (['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'] as $i => $d)
+                                <option value="{{ $i }}" @selected((string) old('dia_semana') === (string) $i)>{{ $d }}</option>
+                            @endforeach
+                        </select>
+                        @error('dia_semana')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="col-md-3">
+                        <label for="plano_hora" class="form-label">Horário</label>
+                        <input type="time" name="hora" id="plano_hora" class="form-control {{ $errors->has('hora') ? 'is-invalid' : '' }}" value="{{ old('hora') }}" required>
+                        @error('hora')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="col-md-4">
+                        <label for="plano_mes" class="form-label">Mês</label>
+                        <input type="month" name="mes" id="plano_mes" class="form-control {{ $errors->has('mes') ? 'is-invalid' : '' }}" value="{{ old('mes') ?? now()->copy()->startOfMonth()->addMonth()->format('Y-m') }}" required>
+                        @error('mes')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                </div>
+                <div class="form-text mt-2">
+                    Valor total: <strong id="plano_valor_total">—</strong>
+                    <span id="plano_unidades" class="text-muted"></span>
+                </div>
+            </form>
+        </x-app.modal>
+        <script>
+            // Cálculo do valor total do plano mensal (unidades × valor do serviço) via API.
+            (function () {
+                const servico = document.getElementById('plano_servico_id');
+                const dia     = document.getElementById('plano_dia_semana');
+                const mes     = document.getElementById('plano_mes');
+                const outV    = document.getElementById('plano_valor_total');
+                const outU    = document.getElementById('plano_unidades');
+                async function recalc() {
+                    if (!servico || !servico.value || !dia || dia.value === '' || !mes || !mes.value) {
+                        if (outV) outV.textContent = '—';
+                        if (outU) outU.textContent = '';
+                        return;
+                    }
+                    try {
+                        const r = await fetch(`/api/mensal/calcular?servico_id=${servico.value}&dia_semana=${dia.value}&mes=${mes.value}`);
+                        const d = await r.json();
+                        if (d.error) { if (outV) outV.textContent = '—'; return; }
+                        if (outV) outV.textContent = 'R$ ' + Number(d.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                        if (outU) outU.textContent = `(${d.unidades} cortes)`;
+                    } catch (e) { if (outV) outV.textContent = '—'; }
+                }
+                [servico, dia, mes].forEach(el => el && el.addEventListener('change', recalc));
+                recalc();
+            })();
+        </script>
+
         {{-- Ordens de Pagamento (Mercado Pago) --}}
         <div class="card shadow my-3">
             <div class="card-header d-flex justify-content-between align-items-center"
@@ -478,7 +655,7 @@
                         <table class="table table-striped table-hover">
                             <thead>
                                 <tr>
-                                    <th>Paciente</th>
+                                    <th>Cliente</th>
                                     <th>Descrição</th>
                                     <th>Valor</th>
                                     <th>Valor recebido</th>
@@ -539,15 +716,39 @@
 
     {{-- Agendamentos --}}
     <div class="container py-4">
-        <h3 class="mb-4">Consultas Agendadas</h3>
+        <h3 class="mb-4">Agendamentos</h3>
+
+        @if(auth()->user()->adm)
+        <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+            <span class="text-muted small">Filtrar por barbeiro:</span>
+            <a class="btn btn-sm {{ !$barbeiroSelecionado ? 'btn-primary' : 'btn-outline-secondary' }}" href="{{ route('dashboard') }}">Todos</a>
+            @foreach($barbeiros as $b)
+                <a class="btn btn-sm {{ (string) $barbeiroSelecionado === (string) $b->id ? 'btn-primary' : 'btn-outline-secondary' }}" href="{{ route('dashboard', ['barbeiro' => $b->id]) }}">{{ $b->name }}</a>
+            @endforeach
+        </div>
+        @endif
 
         @if(auth()->user()->adm == 1 || auth()->user()->func == 1)
             {{-- Modal Adicionar/Editar Agendamentos --}}
-            <x-app.modal id="modal-add-agenda" title="Adicionar Nova Consulta" :btn="[['lbl' => 'Adicionar', 'color' => 'primary', 'onclick' => '$(\'#form-add-agenda\').submit()']]">
+            <x-app.modal id="modal-add-agenda" title="Adicionar Novo Agendamento" :btn="[['lbl' => 'Adicionar', 'color' => 'primary', 'onclick' => '$(\'#form-add-agenda\').submit()']]">
                 <form method="POST" id="form-add-agenda" action="{{ route('agenda.store') }}" novalidate>
                     @csrf
                     @method('post')
-                    <x-app.select label="Cliente" name="user_id" required="true" :options="$clientes->pluck('name', 'id')" />
+                    <input type="hidden" name="user_id" id="user_id" value="{{ old('user_id') }}">
+                    <div class="mb-3 position-relative">
+                        <label class="form-label">Cliente</label>
+                        <input type="text" id="user_id_busca" class="form-control {{ $errors->has('user_id') ? 'is-invalid' : '' }}"
+                               placeholder="Digite nome ou WhatsApp..." autocomplete="off">
+                        <div id="user_id_resultados" class="list-group position-absolute w-100 d-none shadow"
+                             style="z-index:50; max-height:260px; overflow:auto"></div>
+                        @error('user_id')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+                    </div>
+                    @if(auth()->user()->func)
+                        {{-- Funcionário só agenda na própria agenda --}}
+                        <input type="hidden" name="funcionario_id" value="{{ auth()->user()->id }}">
+                    @else
+                        <x-app.select label="Barbeiro" name="funcionario_id" required="true" :options="$barbeiros->pluck('name', 'id')" />
+                    @endif
                     {{-- Especial (encaixe): pode ser aplicado a qualquer serviço e colocado sobre
                          outros agendamentos. O serviço (nome+duração) vem do pacote escolhido em
                          "Descontar de"; no encaixe livre (sem desconto) é escolhido no catálogo. --}}
@@ -630,7 +831,85 @@
         @endif
 
         @if(!auth()->user()->adm && !auth()->user()->func)
-            <x-app.modal id="modal-reagendar" title="Reagendar Consulta"
+        {{-- Ação primária: agendar corte (respeita penalidade de no-show) --}}
+        @if(auth()->user()->isPenalizado())
+        <div class="alert alert-warning d-flex flex-wrap align-items-center gap-2 my-3">
+            <span>⚠️ Você está com uma pendência e não pode agendar online no momento. Regularize com a barbearia para voltar a agendar.</span>
+            <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
+               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Preciso regularizar minha pendência para voltar a agendar.') }}">Falar no WhatsApp</a>
+        </div>
+        @else
+        <div class="card shadow my-3">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <div class="flex-grow-1">
+                    <div class="fw-semibold fs-5">Pronto para o próximo corte?</div>
+                    <div class="text-muted small">Escolha o barbeiro, o serviço, o dia e o horário e pague pelo site.</div>
+                </div>
+                <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
+            </div>
+        </div>
+        @endif
+
+        {{-- Meus pacotes (validade / Negociar) --}}
+        @if($meusCreditos->isNotEmpty())
+        <div class="card shadow my-3">
+            <div class="card-header">Meus pacotes</div>
+            <div class="card-body p-3">
+                @foreach($meusCreditos as $cred)
+                    @php
+                        $usadas   = $cred->agendamentos_count ?? $cred->usadas();
+                        $restam   = $cred->restantes();
+                        $expirado = $cred->expirado();
+                        $negociar = $cred->negociar();
+                    @endphp
+                    <div class="border rounded px-2 py-1 mb-1 small">
+                        <strong>{{ $cred->servico->descricao ?? '—' }}</strong>
+                        <span class="badge bg-secondary">{{ $usadas }}/{{ $cred->quantidade }} usados</span>
+                        @if($negociar)
+                            <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
+                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu pacote de ' . ($cred->servico->descricao ?? '') . ' (expirado).') }}">Negociar</a>
+                        @else
+                            <span class="badge {{ $restam > 0 ? 'bg-success' : 'bg-danger' }}">resta {{ $restam }}</span>
+                        @endif
+                        @if($cred->expira_em)
+                            <span class="text-muted">· expira em {{ $cred->expira_em->format('d/m/Y') }}{{ $expirado ? ' (expirado)' : '' }}</span>
+                        @endif
+                    </div>
+                @endforeach
+            </div>
+        </div>
+        @endif
+
+        @if($meusPlanos->isNotEmpty())
+        <div class="card shadow my-3">
+            <div class="card-header">Meus planos mensais</div>
+            <div class="card-body p-3">
+                @foreach($meusPlanos as $pl)
+                    @php
+                        $diasSlot = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+                        $slot = ($diasSlot[$pl->dia_semana] ?? '') . ' ' . \Carbon\Carbon::parse($pl->hora)->format('H:i');
+                    @endphp
+                    <div class="border rounded px-2 py-1 mb-1 small">
+                        <strong>{{ $pl->servico->descricao ?? '—' }}</strong>
+                        · {{ $pl->funcionario->name ?? '—' }} · {{ $slot }}
+                        <span class="badge bg-secondary">{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }} usadas</span>
+                        @if($pl->status === 'ativo')
+                            <span class="badge bg-success">Ativo</span>
+                        @elseif($pl->status === 'aguardando_pagamento')
+                            <span class="badge bg-warning text-dark">Aguardando pagamento</span>
+                        @elseif($pl->status === 'consumido')
+                            <span class="badge bg-secondary">Concluído</span>
+                        @elseif($pl->status === 'expirado' && $pl->restantes() > 0)
+                            <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
+                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu plano mensal (restam ' . $pl->restantes() . ' cortes).') }}">Negociar {{ $pl->restantes() }}</a>
+                        @endif
+                    </div>
+                @endforeach
+            </div>
+        </div>
+        @endif
+
+            <x-app.modal id="modal-reagendar" title="Reagendar Agendamento"
                 :btn="[['lbl' => 'Confirmar', 'color' => 'primary', 'onclick' => '$(\'#form-reagendar\').submit()']]">
                 <form method="POST" id="form-reagendar" action="{{ route('agenda.store') }}" novalidate>
                     @csrf
@@ -641,6 +920,7 @@
                     <input type="hidden" id="dia_selecionado" name="dia_selecionado" />
                     <input type="hidden" id="hora_selecionada" name="hora_selecionada" value="{{ old('hora_selecionada') }}" />
                     <input type="hidden" name="servico_id" id="servico_id" value="{{ old('servico_id') }}" />
+                    <input type="hidden" name="funcionario_id" id="funcionario_id_reagendar" value="" />
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Serviço</label>
                         <input type="text" id="servico_nome_display" class="form-control" readonly
@@ -810,7 +1090,7 @@
                                     <div id="dia-{{ $dataKey }}" class="collapse {{ $isHoje ? 'show' : '' }} pt-2">
                                         @foreach ($listaDia as $consulta)
                                             @php $isStaff = auth()->user()->adm == 1 || auth()->user()->func == 1; @endphp
-                                            <div class="consulta-card {{ !$consulta->confirmado ? 'consulta-pendente' : '' }} {{ $consulta->especial ? 'consulta-especial' : '' }} d-flex {{ $isStaff ? 'justify-content-between align-items-center' : 'flex-column' }}" data-consulta-id="{{ $consulta->id }}">
+                                            <div class="consulta-card {{ !$consulta->confirmado ? 'consulta-pendente' : '' }} {{ $consulta->especial ? 'consulta-especial' : '' }} {{ $consulta->plano_mensal_id ? 'consulta-mensal' : '' }} d-flex {{ $isStaff ? 'justify-content-between align-items-center' : 'flex-column' }}" data-consulta-id="{{ $consulta->id }}">
                                                 <div class="d-flex flex-grow-1" @if($isStaff) onclick="editarConsulta({{ $consulta->id }})" style="cursor: pointer" @endif>
                                                     <div class="me-3 text-center">
                                                         <div class="consulta-hora">
@@ -831,8 +1111,12 @@
                                                         @else
                                                             <span class="badge bg-warning text-dark mb-1">Aguardando confirmação</span>
                                                         @endif
+                                                        @if($consulta->plano_mensal_id)<span class="badge bg-primary mb-1 ms-1">📅 Mensal</span>@endif
                                                         <br>
-                                                        <strong>Paciente:</strong> {{ $consulta->user->name }}<br>
+                                                        <strong>Cliente:</strong> {{ $consulta->user->name }}
+                                                        @if($consulta->funcionario)<br><strong>Barbeiro:</strong> {{ $consulta->funcionario->name }}@endif
+                                                        @if($consulta->pagar_no_local) <span class="badge bg-info text-dark ms-1">Pagar no local</span>@endif
+                                                        <br>
                                                         <strong>Serviço:</strong> {{ $consulta->servico_display }}
                                                         @if($isStaff)
                                                             <div class="d-flex flex-column gap-1 mt-2">
@@ -858,6 +1142,17 @@
                                                             Enviar pedido de confirmação agora
                                                         </button>
                                                     @endif
+                                                    {{-- Comparecimento (gera penalidade em no-show) --}}
+                                                    @if(is_null($consulta->compareceu))
+                                                        <button class="btn btn-sm btn-outline-success ms-2"
+                                                                onclick="event.stopPropagation(); marcarComparecimento({{ $consulta->id }}, true)">Compareceu</button>
+                                                        <button class="btn btn-sm btn-outline-danger ms-2"
+                                                                onclick="event.stopPropagation(); marcarComparecimento({{ $consulta->id }}, false)">Não compareceu</button>
+                                                    @elseif($consulta->compareceu === true)
+                                                        <span class="badge bg-success ms-2">✓ Compareceu</span>
+                                                    @else
+                                                        <span class="badge bg-danger ms-2">✗ Não compareceu</span>
+                                                    @endif
                                                     <button class="btn btn-sm btn-danger ms-2"
                                                             onclick="event.stopPropagation(); excluirConsultaById({{ $consulta->id }})">
                                                         <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#ffffff"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
@@ -870,7 +1165,8 @@
                                                                 data-servico-id="{{ $consulta->servico_id }}"
                                                                 data-servico-nome="{{ $consulta->servico->descricao ?? '' }}"
                                                                 data-staff="{{ $consultaEhStaff ? '1' : '0' }}"
-                                                                onclick="reagendarConsulta(this.dataset.id, this.dataset.servicoId, this.dataset.servicoNome, this.dataset.staff === '1')">
+                                                                data-funcionario-id="{{ $consulta->funcionario_id }}"
+                                                                onclick="reagendarConsulta(this.dataset.id, this.dataset.servicoId, this.dataset.servicoNome, this.dataset.staff === '1', this.dataset.funcionarioId)">
                                                             Reagendar
                                                         </button>
                                                         <button class="btn btn-sm btn-outline-danger"
@@ -878,7 +1174,8 @@
                                                                 data-servico-id="{{ $consulta->servico_id }}"
                                                                 data-servico-nome="{{ $consulta->servico->descricao ?? '' }}"
                                                                 data-staff="{{ $consultaEhStaff ? '1' : '0' }}"
-                                                                onclick="cancelarConsulta(this.dataset.id, this.dataset.servicoId, this.dataset.servicoNome, this.dataset.staff === '1')">
+                                                                data-funcionario-id="{{ $consulta->funcionario_id }}"
+                                                                onclick="cancelarConsulta(this.dataset.id, this.dataset.servicoId, this.dataset.servicoNome, this.dataset.staff === '1', this.dataset.funcionarioId)">
                                                             Cancelar
                                                         </button>
                                                     </div>
@@ -888,7 +1185,7 @@
                                     </div>
                                 </div>
                             @empty
-                                <p class="text-muted">Nenhuma consulta neste mês.</p>
+                                <p class="text-muted">Nenhum agendamento neste mês.</p>
                             @endforelse
                         </div>
                     </div>
@@ -902,6 +1199,10 @@
 @section('scriptEnd')
     @if(auth()->user()->adm == 1 || auth()->user()->func == 1)
     <script>
+        // ── Sessão (para regras de proteção no JS da tabela de usuários) ────
+        const AUTH_ID  = {{ (int) auth()->id() }};
+        const AUTH_ADM = {{ (int) auth()->user()->adm }};
+
         // ── Mapa de consultas para acesso por id ─────────────────────────────
         const consultaMap = {};
         @foreach($consultas->flatten() as $c)
@@ -925,10 +1226,76 @@
             };
         @endforeach
 
+        // ── Comparecimento / penalidade ─────────────────────────────────────
+        function marcarComparecimento(id, compareceu) {
+            if (!compareceu && !confirm('Marcar como NÃO compareceu? O cliente fica penalizado e não poderá agendar até a penalidade ser removida.')) return;
+            axios.post(`{{ url('/') }}/agenda/${id}/comparecimento`, { compareceu })
+                .then(() => location.reload())
+                .catch(() => alert('Erro ao registrar comparecimento.'));
+        }
+
+        function removerPenalidade(userId, nome) {
+            if (!confirm(`Remover a penalidade de ${nome}? Ele voltará a poder agendar.`)) return;
+            axios.post(`{{ url('/') }}/usuario/${userId}/remover-penalidade`)
+                .then(() => location.reload())
+                .catch(() => alert('Erro ao remover penalidade.'));
+        }
+
+        // ── Busca de cliente (nome ou WhatsApp) no modal de nova consulta ────
+        (function () {
+            const input  = document.getElementById('user_id_busca');
+            const box    = document.getElementById('user_id_resultados');
+            const hidden = document.getElementById('user_id');
+            if (!input || !box || !hidden) return;
+            let timer = null;
+
+            const escolher = (id, nome) => {
+                hidden.value = id;
+                input.value  = nome;
+                box.classList.add('d-none');
+                popularSelectServicos(id); // recarrega serviços/pacotes do cliente
+            };
+
+            input.addEventListener('input', () => {
+                hidden.value = '';
+                clearTimeout(timer);
+                const q = input.value.trim();
+                if (q.length < 2) { box.classList.add('d-none'); return; }
+                timer = setTimeout(() => {
+                    axios.get('{{ url("/") }}/usuarios-search', { params: { q } })
+                        .then(res => {
+                            // só clientes (não adm/func)
+                            const lista = (res.data.data || []).filter(u => !u.adm && !u.func);
+                            if (!lista.length) {
+                                box.innerHTML = '<div class="list-group-item small text-muted">Nenhum cliente encontrado.</div>';
+                            } else {
+                                box.innerHTML = lista.map(u =>
+                                    `<button type="button" class="list-group-item list-group-item-action small py-1" data-id="${u.id}" data-nome="${(u.name || '').replace(/"/g, '&quot;')}">
+                                        ${u.name} <span class="text-muted">${u.whatsapp ?? ''}</span>
+                                    </button>`).join('');
+                            }
+                            box.classList.remove('d-none');
+                        })
+                        .catch(() => box.classList.add('d-none'));
+                }, 300);
+            });
+
+            box.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-id]');
+                if (!btn) return;
+                escolher(btn.dataset.id, btn.dataset.nome);
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!input.contains(e.target) && !box.contains(e.target)) box.classList.add('d-none');
+            });
+        })();
+
         // ── Agendamentos ─────────────────────────────────────────────────────
         function abrirNovoAgendamento() {
             document.getElementById('agendamento_id').value = '';
             document.getElementById('user_id').value = '';
+            const ubNovo = document.getElementById('user_id_busca'); if (ubNovo) ubNovo.value = '';
             document.getElementById('duracao_especial').value = '';
             popularSelectServicos('');
             document.getElementById('dia_selecionado').value = '';
@@ -949,6 +1316,7 @@
                     const c = res.data;
 
                     document.getElementById('user_id').value       = c.user_id;
+                    const ubEdt = document.getElementById('user_id_busca'); if (ubEdt) ubEdt.value = c.user?.name ?? '';
                     document.getElementById('agendamento_id').value = c.id;
                     document.getElementById('dia_selecionado').value = c.data_inicio.split(' ')[0];
                     document.getElementById('hora_selecionada').value = c.data_inicio.split(' ')[1].substring(0, 5);
@@ -997,7 +1365,7 @@
 
             document.getElementById('modal-acao-titulo').textContent = 'O que deseja fazer?';
             document.getElementById('modal-acao-info').textContent =
-                `Consulta de ${c.user.name} — ${c.servico.descricao} — Dia ${c.dia} às ${c.inicio}`;
+                `Agendamento de ${c.user.name} — ${c.servico.descricao} — Dia ${c.dia} às ${c.inicio}`;
             document.getElementById('btn-acao-reagendar').textContent = 'Reagendar';
             document.getElementById('btn-acao-excluir').textContent   = 'Excluir sem reagendar';
 
@@ -1011,7 +1379,7 @@
             document.getElementById('btn-acao-excluir').onclick = () => {
                 document.getElementById('modal-confirmar-titulo').textContent = 'Confirmar exclusão';
                 document.getElementById('modal-confirmar-info').textContent =
-                    `Tem certeza que deseja excluir a consulta de ${c.user.name} (${c.servico.descricao}) das ${c.inicio} às ${c.fim} do dia ${c.dia}?`;
+                    `Tem certeza que deseja excluir o agendamento de ${c.user.name} (${c.servico.descricao}) das ${c.inicio} às ${c.fim} do dia ${c.dia}?`;
                 document.getElementById('btn-confirmar-excluir').textContent = 'Excluir';
 
                 const modalConfirmar = new bootstrap.Modal(document.getElementById('modal-confirmar-exclusao'));
@@ -1024,7 +1392,7 @@
                             if (card) card.remove();
                             delete consultaMap[id];
                         })
-                        .catch(() => alert('Erro ao excluir consulta'));
+                        .catch(() => alert('Erro ao excluir agendamento'));
                 };
 
                 document.getElementById('modal-acao-consulta').addEventListener('hidden.bs.modal', () => {
@@ -1066,7 +1434,7 @@
                         consultaMap[id].confirmado = true;
                     }
                 })
-                .catch(() => alert('Erro ao confirmar consulta'));
+                .catch(() => alert('Erro ao confirmar agendamento'));
         }
 
         // Badge de status de um lembrete: 'enviado' | 'erro' | null (não enviado)
@@ -1173,20 +1541,26 @@
 
         function renderCreditos(lista) {
             const box = document.getElementById('creditos-lista');
+            const wa = @json($whatsappAdmin);
             if (!lista || lista.length === 0) {
                 box.innerHTML = '<p class="text-muted small mb-0">Nenhum serviço contratado.</p>';
                 return;
             }
-            box.innerHTML = lista.map(c => `
+            box.innerHTML = lista.map(c => {
+                const resto = c.negociar
+                    ? `<a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener" href="https://wa.me/${wa}?text=${encodeURIComponent('Olá! Quero renegociar meu pacote de ' + c.descricao + ' (expirado).')}">Negociar</a>`
+                    : `<span class="badge ${c.restantes > 0 ? 'bg-success' : 'bg-danger'}">resta ${c.restantes}</span>`;
+                return `
                 <div class="d-flex align-items-center justify-content-between border rounded px-2 py-1 mb-1">
                     <span class="small">
                         ${c.descricao}
                         <span class="badge bg-secondary">${c.usadas}/${c.quantidade} usadas</span>
-                        <span class="badge ${c.restantes > 0 ? 'bg-success' : 'bg-danger'}">resta ${c.restantes}</span>
-                        ${c.criado_em ? `<span class="text-muted">desde ${c.criado_em}</span>` : ''}
+                        ${resto}
+                        ${c.expira_em ? `<span class="text-muted">expira ${c.expira_em}${c.expirado ? ' (expirado)' : ''}</span>` : ''}
                     </span>
                     <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" onclick="removerCredito(${c.id})" title="Remover">&times;</button>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         }
 
         function adicionarCredito() {
@@ -1473,18 +1847,28 @@
         function renderTabelaUsuarios(paginated) {
             users = paginated.data;
             const tbody = document.getElementById('tbody-usuarios');
-            tbody.innerHTML = paginated.data.map(user => `
-                <tr>
-                    <td class="d-flex">
-                        <svg style="cursor:pointer" onclick="excluirUsuario(${user.id},'${user.name.replace(/'/g,"\\'")}') " xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#dc3545"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
-                        <svg style="cursor:pointer" onclick="editarUsuario(${user.id})" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
-                    </td>
+            const celulaAcoes = (id, nome) => `<td class="d-flex">
+                        <svg style="cursor:pointer" onclick="excluirUsuario(${id},'${nome.replace(/'/g,"\\'")}') " xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#dc3545"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
+                        <svg style="cursor:pointer" onclick="editarUsuario(${id})" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
+                    </td>`;
+
+            tbody.innerHTML = paginated.data.map(user => {
+                // Mesma proteção do blade: super admin (id=1) só é editável por id=1;
+                // colaborador (func) só é editável por admin.
+                let acoes;
+                if (user.id != 1 || AUTH_ID == 1) {
+                    acoes = (user.func != 1 || AUTH_ADM) ? celulaAcoes(user.id, user.name) : '<td>COLAB</td>';
+                } else {
+                    acoes = '<td>ADM</td>';
+                }
+                return `<tr>
+                    ${acoes}
                     <td>${user.name}</td>
                     <td>${user.whatsapp ?? '—'}</td>
                     <td>${user.adm > 0 ? 'Sim' : 'Não'}</td>
                     <td>${user.func > 0 ? 'Sim' : 'Não'}</td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
 
             renderPaginacaoUsuarios(paginated);
         }
@@ -1546,6 +1930,12 @@
         let mgmDataAtual       = new Date();
         let mgmDiasDisponiveis = [];
 
+        // Barbeiro cuja grade está sendo gerenciada (func → próprio; adm → selecionado).
+        function mgmFid() {
+            const sel = document.getElementById('mgm-barbeiro');
+            return sel ? sel.value : '';
+        }
+
         const mgmCalStorageKey = 'mgm_cal_mes_ano';
         const mgmSavedMes = sessionStorage.getItem(mgmCalStorageKey);
         if (mgmSavedMes) {
@@ -1558,7 +1948,7 @@
             const mes = mgmDataAtual.getMonth() + 1;
             sessionStorage.setItem(mgmCalStorageKey, `${ano}-${mgmDataAtual.getMonth()}`);
             try {
-                const res = await axios.get(`/api/dias-disponiveis/${ano}/${mes}`);
+                const res = await axios.get(`/api/dias-disponiveis/${ano}/${mes}?funcionario_id=${mgmFid()}`);
                 mgmDiasDisponiveis = res.data; // array de números de dia
             } catch(e) {
                 mgmDiasDisponiveis = [];
@@ -1673,7 +2063,7 @@
             const original = btn.textContent;
             btn.disabled = true; btn.textContent = 'Enviando...';
             try {
-                const { data } = await axios.post('/api/disponibilidade/semana/' + domingo);
+                const { data } = await axios.post('/api/disponibilidade/semana/' + domingo, { funcionario_id: mgmFid() });
                 alert('Semana preenchida (' + (data.inicio || '') + '–' + (data.fim || '') + ').\n\nPreenchidos: ' + data.preenchidos.length + '\nIgnorados (já configurados): ' + data.ignorados.length);
                 await mgmCarregarMes();
             } catch (e) {
@@ -1722,7 +2112,7 @@
 
             new bootstrap.Modal(document.getElementById('modal-gerenciar-slots')).show();
 
-            axios.get(`/api/disponibilidade/${data}`)
+            axios.get(`/api/disponibilidade/${data}?funcionario_id=${mgmFid()}`)
                 .then(res => mgmRenderSlots(res.data))
                 .catch(() => {
                     document.getElementById('mgm-slots-container').innerHTML =
@@ -1751,7 +2141,7 @@
                 check.value     = slot.hora;
                 check.checked   = slot.disponivel;
                 if (mgmModoLeitura || bloqueadoPorAgend) check.disabled = true;
-                if (bloqueadoPorAgend) check.title = 'Horário bloqueado — há uma consulta agendada';
+                if (bloqueadoPorAgend) check.title = 'Horário bloqueado — há um agendamento';
 
                 const label = document.createElement('label');
                 label.htmlFor   = id;
@@ -1802,7 +2192,7 @@
             document.getElementById('mgm-btn-salvar').disabled = true;
 
             try {
-                await axios.post(`/api/disponibilidade/${data}`, { slots });
+                await axios.post(`/api/disponibilidade/${data}`, { slots, funcionario_id: mgmFid() });
                 location.reload();
             } catch(e) {
                 alert('Erro ao salvar disponibilidade.');
@@ -1918,7 +2308,7 @@
                                     </div>
                                     <div>
                                         ${statusConfirmacaoBadge(c)}
-                                        <strong>Paciente:</strong> ${nomePaciente.textContent}<br>
+                                        <strong>Cliente:</strong> ${nomePaciente.textContent}<br>
                                         <strong>Serviço:</strong> ${nomeServico.textContent}
                                         <div class="d-flex flex-column gap-1 mt-2">
                                             ${confirmaLinha(lembreteBadge(c.lembrete_24h, 'Véspera', c.pre_confirmado_em ? 'bg-info text-dark' : 'bg-success'), c.pre_confirmado_em, 'Pré-confirmou em:', 'bg-info text-dark', c.lembrete_24h)}
@@ -1977,10 +2367,12 @@
     </script>
     @else
     <script>
-        function abrirModalAgendamento(agendamentoId, servicoId, servicoNome) {
+        function abrirModalAgendamento(agendamentoId, servicoId, servicoNome, funcionarioId) {
             document.getElementById('agendamento_id').value       = agendamentoId ?? '';
             document.getElementById('servico_id').value           = servicoId ?? '';
             document.getElementById('servico_nome_display').value = servicoNome ?? '';
+            const fReag = document.getElementById('funcionario_id_reagendar');
+            if (fReag) fReag.value = funcionarioId ?? '';
             document.querySelectorAll('.cal-dia').forEach(d => d.classList.remove('cal-selecionado'));
             document.getElementById('dia_selecionado').value  = '';
             document.getElementById('hora_selecionada').value = '';
@@ -1993,15 +2385,15 @@
             new bootstrap.Modal(document.getElementById('modal-reagendar')).show();
         }
 
-        function reagendarConsulta(id, servicoId, servicoNome, ehStaff) {
+        function reagendarConsulta(id, servicoId, servicoNome, ehStaff, funcionarioId) {
             if (ehStaff) {
                 new bootstrap.Modal(document.getElementById('modal-horario-especial')).show();
                 return;
             }
-            abrirModalAgendamento(id, servicoId, servicoNome);
+            abrirModalAgendamento(id, servicoId, servicoNome, funcionarioId);
         }
 
-        function cancelarConsulta(id, servicoId, servicoNome, ehStaff) {
+        function cancelarConsulta(id, servicoId, servicoNome, ehStaff, funcionarioId) {
             document.getElementById('modal-acao-titulo').textContent = 'O que deseja fazer?';
             document.getElementById('modal-acao-info').textContent   = 'Você pode reagendar para outro horário ou cancelar definitivamente.';
             document.getElementById('btn-acao-reagendar').textContent = 'Reagendar';
@@ -2011,12 +2403,12 @@
 
             document.getElementById('btn-acao-reagendar').onclick = () => {
                 modalAcao.hide();
-                reagendarConsulta(id, servicoId, servicoNome, ehStaff);
+                reagendarConsulta(id, servicoId, servicoNome, ehStaff, funcionarioId);
             };
 
             document.getElementById('btn-acao-excluir').onclick = () => {
-                document.getElementById('modal-confirmar-titulo').textContent = 'Cancelar consulta';
-                document.getElementById('modal-confirmar-info').textContent   = 'Tem certeza que deseja cancelar esta consulta? O funcionário será notificado.';
+                document.getElementById('modal-confirmar-titulo').textContent = 'Cancelar agendamento';
+                document.getElementById('modal-confirmar-info').textContent   = 'Tem certeza que deseja cancelar este agendamento? O funcionário será notificado.';
                 document.getElementById('btn-confirmar-excluir').textContent  = 'Confirmar cancelamento';
 
                 const modalConfirmar = new bootstrap.Modal(document.getElementById('modal-confirmar-exclusao'));
@@ -2029,7 +2421,7 @@
                             if (card) card.remove();
                         })
                         .catch(err => {
-                            alert(err.response?.data?.error ?? 'Erro ao cancelar consulta');
+                            alert(err.response?.data?.error ?? 'Erro ao cancelar agendamento');
                         });
                 };
 

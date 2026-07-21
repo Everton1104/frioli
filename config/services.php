@@ -40,6 +40,14 @@ return [
         'key' => env('RESEND_API_KEY'),
     ],
 
+    // Google reCAPTCHA v2 — proteção anti-bot no agendamento online do cliente.
+    // Sem chaves configuradas (dev) o serviço NÃO exige verificação.
+    'recaptcha' => [
+        'site_key'   => env('RECAPTCHA_SITE_KEY'),
+        'secret_key' => env('RECAPTCHA_SECRET_KEY'),
+        'min_score'  => (float) env('RECAPTCHA_MIN_SCORE', 0.5),
+    ],
+
     'ses' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),

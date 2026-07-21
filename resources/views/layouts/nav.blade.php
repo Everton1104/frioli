@@ -16,7 +16,7 @@
                 <a href="{{url('/')}}/#endereco" class="menu-item-sm">Onde estamos</a>
                 <a href="{{url('/')}}/#contato" class="menu-item-sm">Contato</a>
                 @if(isset(Auth::user()->id))
-                    <a href="dashboard" class="menu-item-sm">Home</a>
+                    <a href="dashboard" class="menu-item-sm">Painel</a>
                     @if(Auth::user()->adm == 1)
                         <a href="{{ url('/admin') }}" class="menu-item-sm">Admin</a>
                     @endif
@@ -46,7 +46,7 @@
     {{-- Rotas autenticadas --}}
     @if(isset(Auth::user()->id))
         <div class="menu-item" onclick="window.location.href='dashboard'">
-            Dashboard
+            Painel
         </div>
         @if(Auth::user()->adm == 1)
         <div class="menu-item" onclick="window.location.href='{{ url('/admin') }}'">

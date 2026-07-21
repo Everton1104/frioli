@@ -17,8 +17,9 @@
     .login-card { background: linear-gradient(155deg, #f1dc8e 0%, #e2c060 100%) !important; box-shadow: 0 16px 40px rgba(0,0,0,.45) !important; }
     .login-card button[type="submit"] { background-color: #1a1410 !important; border-color: #1a1410 !important; color: #f3e6c4 !important; }
     .login-card button[type="submit"]:hover { background-color: #000 !important; border-color: #000 !important; }
-    /* Labels pretos sobre o card dourado (login + cadastro/agendamento). */
-    .login-card label { color: #000 !important; }
+    /* Textos pretos sobre o card dourado. Força TODO texto dentro do card (inclusive
+       placeholder) para preto; o botão de submit mantém texto creme pela regra específica. */
+    .login-card, .login-card *, .login-card input::placeholder, .login-card textarea::placeholder { color: #000 !important; }
 </style>
 @endsection
 @section('main')
@@ -36,7 +37,6 @@
             </div>
 
             <div class="login-card w-full sm:max-w-md mt-6 px-6 py-4 overflow-hidden sm:rounded-lg">
-                <x-auth-session-status class="mb-4" :status="session('status')" />
                 {{ $slot }}
             </div>
         </div>

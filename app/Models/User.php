@@ -26,6 +26,8 @@ class User extends Authenticatable
         'adm',
         'func',
         'excluido',
+        'penalizado',
+        'penalizado_em',
         'whatsapp',
         'whatsapp_code',
         'whatsapp_code_expires_at',
@@ -54,7 +56,20 @@ class User extends Authenticatable
             'password'                 => 'hashed',
             'whatsapp_code_expires_at' => 'datetime',
             'whatsapp_verified_at'     => 'datetime',
+            'penalizado'               => 'boolean',
+            'penalizado_em'            => 'datetime',
         ];
+    }
+
+    // Barbeiros agendáveis: funcionários ativos (func=1, não excluídos).
+    public function scopeBarbeiros($query)
+    {
+        return $query->where('func', 1)->where('excluido', 0)->orderBy('name');
+    }
+
+    public function isPenalizado(): bool
+    {
+        return (bool) $this->penalizado;
     }
 
     public function whatsappVerificado(): bool

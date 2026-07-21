@@ -10,6 +10,7 @@ use App\Models\CreditoServico;
 use App\Models\DisponibilidadeModel;
 use App\Models\LembreteConsulta;
 use App\Models\OrdemPagamento;
+use App\Models\PlanoMensal;
 use App\Models\ServicosModel;
 use App\Models\User;
 use App\Services\InfinitePayService;
@@ -24,11 +25,13 @@ class AgendaController extends Controller
         return ($parts[0] * 60) + $parts[1];
     }
 
-    // ── API: dias com pelo menos 1 slot disponível no mês ────────────────────
+    // ── API: dias com pelo menos 1 slot disponível no mês (do barbeiro) ──────
     public function diasDisponiveis($ano, $mes)
     {
+        $fid  = request('funcionario_id');
         $dias = DisponibilidadeModel::whereYear('data', $ano)
             ->whereMonth('data', $mes)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
             ->selectRaw('DAY(data) as dia')
             ->distinct()
             ->pluck('dia')
@@ -45,7 +48,11 @@ class AgendaController extends Controller
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 
+        // Barbeiro cuja grade está sendo exibida: func vê só a própria; adm escolhe.
+        $fid = $user->func ? $user->id : request('funcionario_id');
+
         $slotsDisponiveis = DisponibilidadeModel::where('data', $data)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
             ->pluck('hora')
             ->map(fn($h) => substr($h, 0, 5))
             ->toArray();
@@ -57,6 +64,7 @@ class AgendaController extends Controller
                 'creditoServico.agendamentos:id,credito_servico_id',
             ])
             ->whereDate('data_inicio', $data)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
             ->orderBy('data_inicio')
             ->get();
 
@@ -98,11 +106,11 @@ class AgendaController extends Controller
         return response()->json($slots);
     }
 
-    // ── API: salvar o horário comercial padrão (início/fim editáveis) ─────────
+    // ── API: salvar o horário comercial padrão da casa (início/fim) — adm only
     public function salvarHorarioComercial(Request $request)
     {
         $user = auth()->user();
-        if (!$user || (!$user->adm && !$user->func)) {
+        if (!$user || !$user->adm) {
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 
@@ -152,22 +160,43 @@ class AgendaController extends Controller
             $cursor->addMinutes(15);
         }
 
+        // Barbeiros-alvo: func → só si; adm → 'all' (todos os barbeiros) ou um específico.
+        if ($user->func) {
+            $alvo = [$user->id];
+        } else {
+            $fidParam = $request->input('funcionario_id', 'all');
+            $alvo = ($fidParam === 'all' || !$fidParam)
+                ? User::barbeiros()->pluck('id')->all()
+                : [(int) $fidParam];
+        }
+
         $preenchidos = [];
         $ignorados   = [];
         for ($i = 0; $i < 7; $i++) {
-            $dia = $base->copy()->addDays($i)->toDateString();
-            if (DisponibilidadeModel::where('data', $dia)->exists()) {
+            $dia     = $base->copy()->addDays($i)->toDateString();
+            $ignorado = false;
+            foreach ($alvo as $fid) {
+                // Aditivo: pula o barbeiro que já tem qualquer slot no dia.
+                if (DisponibilidadeModel::where('data', $dia)->where('funcionario_id', $fid)->exists()) {
+                    $ignorado = true;
+                    continue;
+                }
+                foreach ($slots as $hora) {
+                    DisponibilidadeModel::firstOrCreate(
+                        ['funcionario_id' => $fid, 'data' => $dia, 'hora' => $hora],
+                        ['created_by' => $user->id]
+                    );
+                }
+            }
+            if ($ignorado) {
                 $ignorados[] = $dia;
-                continue;
+            } else {
+                $preenchidos[] = $dia;
             }
-            foreach ($slots as $hora) {
-                DisponibilidadeModel::firstOrCreate(
-                    ['data' => $dia, 'hora' => $hora],
-                    ['created_by' => $user->id]
-                );
-            }
-            $preenchidos[] = $dia;
         }
+
+        // Semana aberta: pré-reserva os slots fixos de clientes mensais (planos ativos).
+        $this->materializarPlanosSemana($alvo, $base);
 
         return response()->json([
             'ok'          => true,
@@ -186,18 +215,23 @@ class AgendaController extends Controller
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 
+        // Barbeiro cuja grade é editada: func → só si; adm → o selecionado.
+        $fid = $user->func ? $user->id : $request->input('funcionario_id');
+        if (!$fid) {
+            return response()->json(['error' => 'Selecione um barbeiro.'], 422);
+        }
+
         $slots = $request->slots ?? [];
 
-        // Remove todos os slots do dia e recria com os selecionados
-        DisponibilidadeModel::where('data', $data)->delete();
+        // Remove os slots do dia DESTE barbeiro e recria com os selecionados.
+        DisponibilidadeModel::where('data', $data)->where('funcionario_id', $fid)->delete();
 
         foreach ($slots as $hora) {
             if (preg_match('/^\d{2}:\d{2}$/', $hora)) {
-                DisponibilidadeModel::create([
-                    'data'       => $data,
-                    'hora'       => $hora . ':00',
-                    'created_by' => $user->id,
-                ]);
+                DisponibilidadeModel::firstOrCreate(
+                    ['funcionario_id' => $fid, 'data' => $data, 'hora' => $hora . ':00'],
+                    ['created_by' => $user->id]
+                );
             }
         }
 
@@ -209,8 +243,13 @@ class AgendaController extends Controller
     {
         $authUser = auth()->user();
         $isStaff  = $authUser && ($authUser->adm || $authUser->func);
+        $fid      = request('funcionario_id'); // barbeiro escolhido (booking) ou em edição
+        // Intervalo dos horários: staff usa a grade de 15min; cliente usa o menor serviço
+        // ativo (ex.: tudo ≥1h → só :00; 30min → :00/:30; 15min → de 15 em 15).
+        $intervalo = $isStaff ? 15 : ServicosModel::intervaloMinimoCliente();
 
         $slotsDisponiveis = DisponibilidadeModel::where('data', $data)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
             ->orderBy('hora')
             ->pluck('hora')
             ->map(fn($h) => substr($h, 0, 5))
@@ -236,17 +275,21 @@ class AgendaController extends Controller
         // staff pode marcá-lo, vindo do checkbox no formulário.
         $especialAgendamento = $isStaff && request()->boolean('especial');
 
-        // Clientes só enxergam slots em :00 e :30
+        // Cliente só enxerga slots no intervalo do menor serviço ativo (:00, :00/:30,
+        // ou de 15 em 15). O start em minutos deve ser múltiplo do intervalo.
         if (!$isStaff) {
             $slotsDisponiveis = array_values(array_filter(
                 $slotsDisponiveis,
-                fn($h) => in_array(substr($h, 3, 2), ['00', '30'])
+                fn($h) => (((int) substr($h, 0, 2)) * 60 + (int) substr($h, 3, 2)) % $intervalo === 0
             ));
         }
 
         $ignoreId  = request('ignore_id');
+        // Conflito é POR BARBEIRO: só agendamentos do barbeiro selecionado ocupam o slot.
+        // (Órfãos legados com funcionario_id NULL não bloqueiam nenhum barbeiro.)
         $consultas = AgendamentoModel::with('servico')
             ->whereDate('data_inicio', $data)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
             ->whereIn('status', AgendamentoModel::OCUPANTES)
             ->when($ignoreId, fn($q) => $q->where('id', '!=', $ignoreId))
             ->orderBy('data_inicio')
@@ -257,7 +300,6 @@ class AgendaController extends Controller
         if ($especialAgendamento && request()->filled('duracao_min')) {
             $duracaoMin = max(1, (int) request('duracao_min'));
         }
-        $intervalo       = $isStaff ? 15 : 30;
         $slotsNecessarios = (int) ceil($duracaoMin / $intervalo);
 
         $agora = Carbon::now();
@@ -397,6 +439,17 @@ class AgendaController extends Controller
             }
         }
 
+        // Barbeiro responsável: func → só si; adm → do formulário; cliente reagendando
+        // mantém o barbeiro original (não troca de barbeiro ao reagendar).
+        if ($isStaff) {
+            $funcionarioId = $authUser->func ? $authUser->id : $request->funcionario_id;
+            if (!$funcionarioId) {
+                return back()->withErrors(['funcionario_id' => 'Selecione o barbeiro.'])->withInput();
+            }
+        } else {
+            $funcionarioId = $agendamentoOriginal?->funcionario_id;
+        }
+
         // Agendamento especial (encaixe): só o staff pode marcar. Pode sobrepor outros
         // agendamentos e ter duração personalizada (vazio = duração do serviço).
         $especial = $isStaff && $request->boolean('especial');
@@ -416,8 +469,9 @@ class AgendaController extends Controller
                 ->withInput();
         }
 
-        // Buscar todos os slots disponíveis do dia
+        // Slots abertos do dia PARA O BARBEIRO selecionado (grade própria).
         $slotsDisponiveis = DisponibilidadeModel::where('data', $inicio->toDateString())
+            ->when($funcionarioId, fn($q) => $q->where('funcionario_id', $funcionarioId))
             ->pluck('hora')
             ->map(fn($h) => substr($h, 0, 5))
             ->toArray();
@@ -452,6 +506,7 @@ class AgendaController extends Controller
                   ->where('data_fim', '>', $inicio);
             })
             ->where('especial', 0)
+            ->when($funcionarioId, fn($q) => $q->where('funcionario_id', $funcionarioId))
             ->whereIn('status', AgendamentoModel::OCUPANTES)
             ->when($ignoreId, fn($q) => $q->where('id', '!=', $ignoreId))
             ->exists();
@@ -497,13 +552,28 @@ class AgendaController extends Controller
                         ->withErrors(['servico_id' => 'O pacote escolhido para desconto não possui saldo.'])
                         ->withInput();
                 }
+                if ($credito->expirado()) {
+                    return back()
+                        ->withErrors(['servico_id' => 'O pacote escolhido está expirado (em negociação). Selecione um pacote vigente.'])
+                        ->withInput();
+                }
             }
 
             if (!$especial) {
-                // Agendamento comum: o pacote deve ser do próprio serviço.
+                // Agendamento comum: precisa de pacote VIGENTE do próprio serviço.
+                // Sem pacote explícito, FIFO — pega o vigente que vence primeiro com saldo.
+                if (!$credito) {
+                    $credito = CreditoServico::where('user_id', $request->user_id)
+                        ->where('servico_id', $servico->id)
+                        ->vigente()
+                        ->get()
+                        ->filter(fn($c) => $c->restantes() > 0)
+                        ->sortBy('expira_em')
+                        ->first();
+                }
                 if (!$credito || (int) $credito->servico_id !== (int) $servico->id) {
                     return back()
-                        ->withErrors(['servico_id' => 'O cliente não possui saldo disponível para este serviço.'])
+                        ->withErrors(['servico_id' => 'O cliente não possui saldo vigente para este serviço.'])
                         ->withInput();
                 }
             }
@@ -518,12 +588,13 @@ class AgendaController extends Controller
         // nunca recebe a véspera da data nova.
         $dataMudou = $isEdicao && $dataAntiga && !$dataAntiga->equalTo($inicio);
 
-        $agendamento->user_id     = $request->user_id;
-        $agendamento->servico_id  = $servico->id;
-        $agendamento->data_inicio = $inicio;
-        $agendamento->data_fim    = $fim;
-        $agendamento->especial    = $especial;
-        $agendamento->confirmado  = 0;
+        $agendamento->user_id        = $request->user_id;
+        $agendamento->servico_id     = $servico->id;
+        $agendamento->funcionario_id = $funcionarioId;
+        $agendamento->data_inicio    = $inicio;
+        $agendamento->data_fim       = $fim;
+        $agendamento->especial       = $especial;
+        $agendamento->confirmado     = 0;
         if ($dataMudou) {
             $agendamento->pre_confirmado_em = null;
             $agendamento->confirmado_em     = null;
@@ -609,6 +680,9 @@ class AgendaController extends Controller
         }
 
         $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
+        if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
         $cliente     = $agendamento->user;
         $phoneId     = env('PHONE_NUMBER_ID');
         $template    = env('WHATSAPP_TEMPLATE_LEMBRETE');
@@ -659,6 +733,10 @@ class AgendaController extends Controller
         }
 
         $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
+        if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+        $eraConfirmado = (bool) $agendamento->confirmado;
         $agendamento->confirmado    = 1;
         $agendamento->confirmado_em = now();
         $agendamento->status        = AgendamentoModel::STATUS_CONFIRMADO;
@@ -667,6 +745,11 @@ class AgendaController extends Controller
             $agendamento->pre_confirmado_em = now();
         }
         $agendamento->save();
+
+        // Plano mensal: desconta 1 unidade ao confirmar pela primeira vez.
+        if (!$eraConfirmado && $agendamento->plano_mensal_id) {
+            $this->descontarPlanoMensal($agendamento->plano_mensal_id);
+        }
 
         $this->notificarWhatsApp($agendamento, false);
 
@@ -687,6 +770,10 @@ class AgendaController extends Controller
 
         $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
 
+        if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
         if (!in_array($agendamento->status, [
             AgendamentoModel::STATUS_PAGO_AGUARDANDO,
             AgendamentoModel::STATUS_AGUARDANDO_PAGAMENTO,
@@ -699,21 +786,27 @@ class AgendaController extends Controller
         $agendamento->save();
 
         // Reembolso da ordem aprovada vinculada (best-effort → fallback manual).
-        $ordem = OrdemPagamento::where('agendamento_id', $agendamento->id)
-            ->whereIn('status', ['approved'])
-            ->latest('id')
-            ->first();
-
+        // "Pagar no local" não tem ordem de pagamento online — nada a reembolsar.
         $reembolso = ['ok' => false, 'motivo' => 'Sem ordem aprovada vinculada'];
-        if ($ordem) {
-            $reembolso = app(InfinitePayService::class)->reembolsar($ordem);
-            $ordem->status = $reembolso['ok'] ? 'refunded' : 'reembolso_pendente';
-            $ordem->eventos()->create([
-                'status'  => $ordem->status,
-                'origem'  => 'manual',
-                'payload' => $reembolso,
-            ]);
-            $ordem->save();
+
+        if ($agendamento->pagar_no_local) {
+            $reembolso = ['ok' => true, 'motivo' => 'Sem pagamento online (pagar no local)'];
+        } else {
+            $ordem = OrdemPagamento::where('agendamento_id', $agendamento->id)
+                ->whereIn('status', ['approved'])
+                ->latest('id')
+                ->first();
+
+            if ($ordem) {
+                $reembolso = app(InfinitePayService::class)->reembolsar($ordem);
+                $ordem->status = $reembolso['ok'] ? 'refunded' : 'reembolso_pendente';
+                $ordem->eventos()->create([
+                    'status'  => $ordem->status,
+                    'origem'  => 'manual',
+                    'payload' => $reembolso,
+                ]);
+                $ordem->save();
+            }
         }
 
         $this->notificarClienteRecusa($agendamento, $reembolso);
@@ -753,6 +846,10 @@ class AgendaController extends Controller
         if (!$user->adm && !$user->func && $agendamento->user_id !== $user->id) {
             abort(403);
         }
+        // Funcionário só edita atendimentos da própria agenda.
+        if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
+            abort(403);
+        }
 
         // Inclui o ordinal desta consulta no pacote, para o select reabrir com o
         // número correto mesmo quando o pacote já está esgotado por ela.
@@ -769,12 +866,17 @@ class AgendaController extends Controller
         $user        = auth()->user();
         $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
 
+        // Funcionário só remove atendimentos da própria agenda.
+        if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
         if (!$user->adm && !$user->func) {
             if ($agendamento->user_id !== $user->id) {
                 abort(403);
             }
             if (!$agendamento->data_inicio->isFuture()) {
-                return response()->json(['error' => 'Não é possível cancelar consultas passadas.'], 422);
+                return response()->json(['error' => 'Não é possível cancelar agendamentos passados.'], 422);
             }
             Aviso::create([
                 'tipo'        => 'cancelamento',
@@ -817,6 +919,162 @@ class AgendaController extends Controller
         }
         Aviso::findOrFail($id)->update(['dispensado_at' => now()]);
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Marca comparecimento (true) ou no-show (false). No-show penaliza o cliente
+     * (bloqueia novos agendamentos até adm/func remover a penalidade).
+     */
+    public function comparecimento(Request $request, $id)
+    {
+        $user = auth()->user();
+        if (!$user->adm && !$user->func) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $agendamento = AgendamentoModel::with('user')->findOrFail($id);
+        if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $compareceu = (bool) $request->input('compareceu', false);
+        $agendamento->compareceu = $compareceu;
+        $agendamento->save();
+
+        if (!$compareceu && $agendamento->user && !$agendamento->user->isPenalizado()) {
+            $agendamento->user->penalizado    = true;
+            $agendamento->user->penalizado_em = now();
+            $agendamento->user->save();
+        }
+
+        return response()->json(['ok' => true, 'compareceu' => $compareceu]);
+    }
+
+    /**
+     * Remove a penalidade de um cliente (adm ou func).
+     */
+    public function removerPenalidade($userId)
+    {
+        $user = auth()->user();
+        if (!$user->adm && !$user->func) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $alvo = User::findOrFail($userId);
+        $alvo->penalizado    = false;
+        $alvo->penalizado_em = null;
+        $alvo->save();
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Pré-reserva as ocorrências do plano mensal (status pago_aguardando) cujo slot do
+     * barbeiro já esteja aberto — bloqueia clientes avulsos. NÃO desconta unidade (o
+     * desconto é só na confirmação do funcionário). Idempotente (pula conflito/já-existente).
+     * $inicio/$fim limitam a janela de datas (usado pelo hook de salvarSemana).
+     * Retorna o nº de pré-reservas criadas.
+     */
+    public function materializarPlano(PlanoMensal $plano, ?Carbon $inicio = null, ?Carbon $fim = null): int
+    {
+        if ($plano->status !== PlanoMensal::STATUS_ATIVO) {
+            return 0;
+        }
+        if (!$plano->funcionario_id || !$plano->servico) {
+            return 0;
+        }
+
+        $duracaoMin = $this->timeToMinutes((string) $plano->servico->duracao);
+        $horaStr    = (string) $plano->hora; // "HH:MM:SS"
+        $hhmm       = substr($horaStr, 0, 5);
+        $agora      = Carbon::now();
+        $criados    = 0;
+
+        foreach ($plano->datasOcorrencias() as $data) {
+            if ($inicio && $data->lt($inicio->copy()->startOfDay())) {
+                continue;
+            }
+            if ($fim && $data->gt($fim->copy()->endOfDay())) {
+                continue;
+            }
+
+            $inicioAg = $data->copy()->setTimeFromTimeString($hhmm);
+            if ($inicioAg <= $agora) {
+                continue; // só datas futuras
+            }
+            $fimAg = $inicioAg->copy()->addMinutes($duracaoMin);
+
+            // O barbeiro abriu este slot?
+            $aberto = DisponibilidadeModel::where('funcionario_id', $plano->funcionario_id)
+                ->where('data', $data->toDateString())
+                ->where('hora', $horaStr)
+                ->exists();
+            if (!$aberto) {
+                continue;
+            }
+
+            // Conflito por barbeiro (ou já existe pré-reserva deste plano)?
+            $conflito = AgendamentoModel::where('funcionario_id', $plano->funcionario_id)
+                ->where(function ($q) use ($inicioAg, $fimAg) {
+                    $q->where('data_inicio', '<', $fimAg)->where('data_fim', '>', $inicioAg);
+                })
+                ->whereIn('status', AgendamentoModel::OCUPANTES)
+                ->exists();
+            if ($conflito) {
+                continue;
+            }
+
+            AgendamentoModel::create([
+                'user_id'         => $plano->user_id,
+                'servico_id'      => $plano->servico_id,
+                'funcionario_id'  => $plano->funcionario_id,
+                'plano_mensal_id' => $plano->id,
+                'data_inicio'     => $inicioAg,
+                'data_fim'        => $fimAg,
+                'status'          => AgendamentoModel::STATUS_PAGO_AGUARDANDO,
+                'confirmado'      => 0,
+            ]);
+            $criados++;
+        }
+
+        return $criados;
+    }
+
+    /**
+     * Ao abrir a semana (salvarSemana), pré-reserva os slots fixos dos planos mensais
+     * ativos dos barbeiros cuja janela intersecta a semana aberta.
+     */
+    public function materializarPlanosSemana(array $funcionarioIds, Carbon $domingo): void
+    {
+        if (empty($funcionarioIds)) {
+            return;
+        }
+        $sabado = $domingo->copy()->addDays(6);
+
+        $planos = PlanoMensal::ativo()
+            ->whereIn('funcionario_id', $funcionarioIds)
+            ->get();
+
+        foreach ($planos as $plano) {
+            $this->materializarPlano($plano, $domingo, $sabado);
+        }
+    }
+
+    /**
+     * Desconta 1 unidade do plano ao confirmar um atendimento do plano. Marca consumido
+     * quando todas as unidades forem usadas.
+     */
+    private function descontarPlanoMensal($planoId): void
+    {
+        $plano = PlanoMensal::find($planoId);
+        if (!$plano || $plano->status !== PlanoMensal::STATUS_ATIVO) {
+            return;
+        }
+        $plano->increment('unidades_usadas');
+        if ((int) $plano->fresh()->unidades_usadas >= (int) $plano->unidades_total) {
+            $plano->status = PlanoMensal::STATUS_CONSUMIDO;
+            $plano->save();
+        }
     }
 
     private function notificarStaffCancelamento(AgendamentoModel $agendamento): void

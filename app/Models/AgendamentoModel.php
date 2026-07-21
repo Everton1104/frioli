@@ -12,6 +12,7 @@ class AgendamentoModel extends Model
     protected $fillable = [
         'user_id',
         'servico_id',
+        'funcionario_id',
         'data_inicio',
         'data_fim',
         'confirmado',
@@ -21,6 +22,9 @@ class AgendamentoModel extends Model
         'pre_confirmado_em',
         'confirmado_em',
         'status',
+        'compareceu',
+        'pagar_no_local',
+        'plano_mensal_id',
     ];
 
     // Ciclo de vida do booking público. Default "confirmado" (staff cria direto).
@@ -45,6 +49,8 @@ class AgendamentoModel extends Model
         'especial'           => 'boolean',
         'pre_confirmado_em'  => 'datetime',
         'confirmado_em'      => 'datetime',
+        'compareceu'         => 'boolean',
+        'pagar_no_local'     => 'boolean',
     ];
 
     // Serializa as datas no horário local (sem conversão p/ UTC) e com espaço,
@@ -104,6 +110,18 @@ class AgendamentoModel extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    // Barbeiro (funcionário) responsável pelo atendimento. NULL = legado/órfão.
+    public function funcionario()
+    {
+        return $this->belongsTo(User::class, 'funcionario_id');
+    }
+
+    // Plano mensal fixo que originou este agendamento (auto-reservado). NULL = avulso.
+    public function planoMensal()
+    {
+        return $this->belongsTo(PlanoMensal::class);
     }
 
     public function lembretes()

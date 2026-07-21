@@ -93,7 +93,7 @@
             transform: scale(1.18);
         }
         .hero-bg-tint { position: absolute; inset: 0; z-index: 1;
-            background: linear-gradient(180deg, rgba(26,24,19,.55), rgba(26,24,19,.80)); }
+            background: linear-gradient(180deg, rgba(26,24,19,.80), rgba(26,24,19,.80)); }
 
         .hero-carousel {
             position: absolute; inset: 0; z-index: 2;
@@ -102,10 +102,10 @@
             -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
                     mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
         }
-        .hero-rotator { transform: rotate(-20deg) scale(1.75); display: flex; align-items: center; }
+        .hero-rotator { transform: rotate(-15deg) scale(1.75); display: flex; align-items: center; }
         .hero-track {
             display: flex; gap: 1.25rem; align-items: center;
-            animation: heroScroll 224s linear infinite;
+            animation: heroScroll 172s linear infinite;
             will-change: transform;
         }
         .hero-track img {
@@ -121,7 +121,7 @@
         .hero-logo { height: 260px; width: auto; border-radius: 16px; filter: drop-shadow(0 10px 24px rgba(0,0,0,.6)); }
 
         @media (max-width: 768px) {
-            .hero-rotator { transform: rotate(-20deg) scale(2.3); }
+            .hero-rotator { transform: rotate(-15deg) scale(2.3); }
             .hero-track img { height: 48vh; width: 31vh; }
             .hero-logo { height: 190px; }
         }
@@ -134,7 +134,7 @@
         @media (max-width: 480px) { .galeria-grid { columns: 1; } }
     </style>
 
-    <!-- FRIOLI-BUILD: carrossel=224s (desktop e mobile), angulo=-20deg (edite o CSS acima) -->
+    <!-- FRIOLI-BUILD: carrossel=172s (desktop e mobile), angulo=-15deg (edite o CSS acima) -->
     <!-- ── Hero ─────────────────────────────────────────────────────── -->
     <header class="hero text-white">
         <div class="hero-bg"></div>
@@ -199,7 +199,12 @@
                 @endforeach
             </div>
             <p class="mt-4 text-secondary">{!! PageContent::get('servicos', 'nota', '') !!}</p>
-            <a href="{{ route('agendar.entrar') }}" class="btn btn-agendar btn-lg px-5 fw-semibold mt-3">Agende seu corte agora</a>
+            @php
+                $u = Auth::user();
+                $rotaAgendar = !$u ? route('agendar.entrar')
+                    : ($u->whatsappVerificado() ? route('agendar.index') : route('verificar.whatsapp'));
+            @endphp
+            <a href="{{ $rotaAgendar }}" class="btn btn-agendar btn-lg px-5 fw-semibold mt-3">Agende seu corte agora</a>
         </div>
     </section>
 

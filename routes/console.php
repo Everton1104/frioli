@@ -37,3 +37,6 @@ Schedule::command('agendamentos:expirar-pendentes')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+// Fim do mês: planos mensais com unidades não usadas → expiram (Negociar).
+Schedule::command('planos:expirar')->dailyAt('03:17')->withoutOverlapping();

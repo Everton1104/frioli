@@ -3,7 +3,7 @@
         <div>
             @if($aviso->tipo === 'cancelamento')
                 @php $cancEhStaff = (bool) $aviso->especial; @endphp
-                <strong>{{ ucfirst($aviso->user->name) }}</strong> cancelou a consulta de
+                <strong>{{ ucfirst($aviso->user->name) }}</strong> cancelou o agendamento de
                 <em>{{ $aviso->servico->descricao }}</em> do dia
                 {{ $aviso->data_antiga->format('d/m/Y') }} às {{ $aviso->data_antiga->format('H:i') }}.
                 <div class="alert alert-danger d-flex align-items-start gap-2 mt-2 mb-0 py-2 px-3">

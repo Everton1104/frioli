@@ -10,9 +10,9 @@ class CreditoServico extends Model
 {
     protected $table = 'creditos_servico';
 
-    protected $fillable = ['user_id', 'servico_id', 'quantidade'];
+    protected $fillable = ['user_id', 'servico_id', 'quantidade', 'expira_em'];
 
-    protected $casts = ['quantidade' => 'integer'];
+    protected $casts = ['quantidade' => 'integer', 'expira_em' => 'datetime'];
 
     public function user()
     {
@@ -39,6 +39,31 @@ class CreditoServico extends Model
     public function restantes(): int
     {
         return max(0, $this->quantidade - $this->usadas());
+    }
+
+    // Pacote vencido (expira_em no passado). Null = sem validade definida (legado).
+    public function expirado(): bool
+    {
+        return $this->expira_em !== null && $this->expira_em < now();
+    }
+
+    public function diasRestantes(): ?int
+    {
+        return $this->expira_em !== null ? (int) ceil(now()->diffInDays($this->expira_em, false)) : null;
+    }
+
+    // Pacote vigente (ainda dentro da validade) — elegível para descontar agendamentos.
+    public function scopeVigente($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('expira_em')->orWhere('expira_em', '>=', now());
+        });
+    }
+
+    // Pacote expirado com saldo restante → entra em "Negociar".
+    public function negociar(): bool
+    {
+        return $this->expirado() && $this->restantes() > 0;
     }
 
     // Posição (1-based) de um agendamento dentro do pacote: a 1ª consulta é 1,

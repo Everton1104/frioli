@@ -26,15 +26,15 @@ class AvisoObserver
         }
 
         $aviso->loadMissing('user');
-        $nome          = ucfirst($aviso->user->name ?? 'Um paciente');
+        $nome          = ucfirst($aviso->user->name ?? 'Um cliente');
         $nomeComercial = env('WHATSAPP_NOME_COMERCIAL', config('app.name'));
 
         $antiga = $aviso->data_antiga ? Carbon::parse($aviso->data_antiga)->format('d/m \à\s H:i') : null;
         $nova   = $aviso->data_nova   ? Carbon::parse($aviso->data_nova)->format('d/m \à\s H:i')   : null;
 
         $resumo = match ($aviso->tipo) {
-            'reagendamento_solicitado' => "{$nome} solicitou reagendamento da consulta de {$antiga}.",
-            'reagendamento'            => "{$nome} reagendou a consulta de {$antiga} para {$nova}.",
+            'reagendamento_solicitado' => "{$nome} solicitou reagendamento do agendamento de {$antiga}.",
+            'reagendamento'            => "{$nome} reagendou o agendamento de {$antiga} para {$nova}.",
             default                    => "Novo aviso de {$nome}.",
         };
 

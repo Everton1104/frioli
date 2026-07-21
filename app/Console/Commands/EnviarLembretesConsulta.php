@@ -11,7 +11,7 @@ use Illuminate\Support\Carbon;
 class EnviarLembretesConsulta extends Command
 {
     protected $signature   = 'lembretes:enviar {modo=todos : Quais lembretes enviar: diario, 2h ou todos}';
-    protected $description = 'Envia lembretes de consulta via WhatsApp (diário do dia seguinte e 2h antes)';
+    protected $description = 'Envia lembretes de agendamento via WhatsApp (diário do dia seguinte e 2h antes)';
 
     public function handle(): void
     {

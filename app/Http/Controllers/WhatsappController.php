@@ -182,7 +182,7 @@ class WhatsappController extends Controller
 
         self::enviarMsg($phoneId, $number,
             "Obrigado por confirmar, {$nome}! ✅ Sua presença para o dia *{$data}* às *{$hora}* está pré-confirmada.\n\n"
-            . "No dia da consulta enviaremos uma última confirmação. Até lá! 😊"
+            . "No dia do agendamento enviaremos uma última confirmação. Até lá! 😊"
         );
     }
 

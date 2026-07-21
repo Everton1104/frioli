@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\AgendamentoModel;
 use App\Models\OrdemPagamento;
+use App\Models\PlanoMensal;
+use App\Http\Controllers\Agenda\AgendaController;
 use App\Services\InfinitePayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -169,6 +171,7 @@ class InfinitePayWebhookController extends Controller
             if ($anterior !== 'approved') {
                 $this->confirmarPagamento($ordem);
                 $this->ativarAgendamentoSePago($ordem);
+                $this->ativarPlanoMensalSePago($ordem);
             }
         });
     }
@@ -196,6 +199,25 @@ class InfinitePayWebhookController extends Controller
         $ag->save();
 
         $this->notificarAdminNovoPedido($ag);
+    }
+
+    /**
+     * Plano mensal: ao aprovar a ordem vinculada a um plano, ativa o plano e materializa
+     * as pré-reservas das ocorrências cujo slot do barbeiro já esteja aberto no mês-alvo.
+     */
+    private function ativarPlanoMensalSePago(OrdemPagamento $ordem): void
+    {
+        if (!$ordem->plano_mensal_id) {
+            return;
+        }
+        $plano = PlanoMensal::with('servico')->find($ordem->plano_mensal_id);
+        if (!$plano || $plano->status !== PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO) {
+            return;
+        }
+        $plano->status = PlanoMensal::STATUS_ATIVO;
+        $plano->save();
+
+        app(AgendaController::class)->materializarPlano($plano);
     }
 
     private function notificarAdminNovoPedido(AgendamentoModel $ag): void

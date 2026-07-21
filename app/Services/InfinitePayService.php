@@ -41,7 +41,7 @@ class InfinitePayService
                 [
                     'quantity'    => 1,
                     'price'       => (int) round((float) $ordem->valor * 100), // centavos
-                    'description' => mb_substr((string) $ordem->descricao, 0, 100) ?: 'Consulta',
+                    'description' => mb_substr((string) $ordem->descricao, 0, 100) ?: 'Agendamento',
                 ],
             ],
             'order_nsu'    => (string) $ordem->external_reference, // ancora para casar webhook + payment_check

@@ -36,6 +36,9 @@ class CreditoServicoController extends Controller
                     'usadas'          => $c->usadas(),
                     'restantes'       => $c->restantes(),
                     'criado_em'       => $c->created_at?->format('d/m/Y'),
+                    'expira_em'       => $c->expira_em?->format('d/m/Y'),
+                    'expirado'        => $c->expirado(),
+                    'negociar'        => $c->negociar(),
                 ];
             })
             ->values();
@@ -65,6 +68,7 @@ class CreditoServicoController extends Controller
             'user_id'    => $user->id,
             'servico_id' => $servico->id,
             'quantidade' => (int) $request->quantidade,
+            'expira_em'  => now()->addDays(30),
         ]);
 
         return response()->json(['ok' => true]);

@@ -24,7 +24,7 @@ class OrdemPagamentoController extends Controller
             'valor'     => ['required', 'numeric', 'min:0.01'],
             'descricao' => ['required', 'string', 'max:255'],
         ], [
-            'user_id.exists'     => 'Paciente inválido.',
+            'user_id.exists'     => 'Cliente inválido.',
             'valor.min'          => 'O valor deve ser maior que zero.',
             'descricao.required' => 'Informe uma descrição.',
         ]);
@@ -35,7 +35,7 @@ class OrdemPagamentoController extends Controller
             ->where(fn($q) => $q->where('adm', 0)->orWhere('func', 0))
             ->first();
         if (!$paciente) {
-            return redirect()->back()->withErrors(['user_id' => 'Paciente inválido.'])->withInput();
+            return redirect()->back()->withErrors(['user_id' => 'Cliente inválido.'])->withInput();
         }
 
         $ordem = DB::transaction(function () use ($dados) {
@@ -61,6 +61,110 @@ class OrdemPagamentoController extends Controller
         $this->avisarPaciente($paciente, $ordem);
 
         return redirect()->back()->with('msg', 'Ordem de pagamento criada com sucesso!');
+    }
+
+    // ── Staff: criar plano mensal (horário fixo semanal) para um cliente ─────
+    // Espelha o antigo auto-atendimento do cliente (AgendaPublicaController::
+    // mensalComprar), porém o cliente é escolhido pelo staff. O plano nasce
+    // aguardando pagamento e o cliente recebe o link da ordem por WhatsApp
+    // (avisarPaciente); ao pagar, o webhook ativa o plano.
+    public function mensalStore(Request $request)
+    {
+        abort_unless(auth()->user()->adm, 403);
+
+        $dados = $request->validate([
+            'user_id'        => ['required', 'integer', 'exists:users,id'],
+            'servico_id'     => ['required', 'integer'],
+            'funcionario_id' => ['required', 'integer'],
+            'dia_semana'     => ['required', 'integer', 'between:0,6'],
+            'hora'           => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+            'mes'            => ['required', 'date'],
+        ], [
+            'user_id.exists'         => 'Cliente inválido.',
+            'servico_id.required'    => 'Selecione o serviço.',
+            'funcionario_id.required'=> 'Selecione o barbeiro.',
+            'dia_semana.required'    => 'Selecione o dia da semana.',
+            'hora.required'          => 'Selecione o horário.',
+            'mes.required'           => 'Selecione o mês.',
+        ]);
+
+        // Cliente precisa ser cliente (não adm/func) e não excluído.
+        $cliente = \App\Models\User::where('id', $dados['user_id'])
+            ->where('excluido', 0)
+            ->where(fn($q) => $q->where('adm', 0)->orWhere('func', 0))
+            ->first();
+        if (!$cliente) {
+            return redirect()->back()->withErrors(['user_id' => 'Cliente inválido.'])->withInput();
+        }
+
+        $servico = \App\Models\ServicosModel::where('excluido', 0)
+            ->where('status', 1)
+            ->where('recorrente', 1)
+            ->where('valor', '>', 0)
+            ->find($dados['servico_id']);
+        if (!$servico) {
+            return redirect()->back()->withErrors(['servico_id' => 'Serviço mensal inválido.'])->withInput();
+        }
+
+        $funcionario = \App\Models\User::barbeiros()->find($dados['funcionario_id']);
+        if (!$funcionario) {
+            return redirect()->back()->withErrors(['funcionario_id' => 'Barbeiro inválido.'])->withInput();
+        }
+
+        $mes  = \Illuminate\Support\Carbon::parse($dados['mes'])->startOfMonth();
+        $hora = $dados['hora'] . ':00';
+        $calc = \App\Models\PlanoMensal::calcular($servico, $mes, (int) $dados['dia_semana']);
+
+        if ($calc['unidades'] < 2) {
+            return redirect()->back()->withErrors(['dia_semana' => 'Não há ocorrências suficientes neste mês.'])->withInput();
+        }
+
+        // 1 cliente por slot semanal de cada barbeiro no mês.
+        $existe = \App\Models\PlanoMensal::whereIn('status', [\App\Models\PlanoMensal::STATUS_ATIVO, \App\Models\PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
+            ->where('funcionario_id', $funcionario->id)
+            ->where('dia_semana', (int) $dados['dia_semana'])
+            ->where('hora', $hora)
+            ->where('mes', $mes->toDateString())
+            ->exists();
+        if ($existe) {
+            return redirect()->back()->withErrors(['funcionario_id' => 'Esse horário fixo já foi reservado para este barbeiro neste mês. Escolha outro horário.'])->withInput();
+        }
+
+        $ordem = DB::transaction(function () use ($cliente, $servico, $funcionario, $dados, $mes, $hora, $calc) {
+            $plano = \App\Models\PlanoMensal::create([
+                'user_id'         => $cliente->id,
+                'servico_id'      => $servico->id,
+                'funcionario_id'  => $funcionario->id,
+                'dia_semana'      => (int) $dados['dia_semana'],
+                'hora'            => $hora,
+                'mes'             => $mes,
+                'unidades_total'  => $calc['unidades'],
+                'unidades_usadas' => 0,
+                'valor_total'     => $calc['valor_total'],
+                'status'          => \App\Models\PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO,
+            ]);
+
+            $o = OrdemPagamento::create([
+                'user_id'            => $cliente->id,
+                'criado_por'         => auth()->id(),
+                'plano_mensal_id'    => $plano->id,
+                'valor'              => $calc['valor_total'],
+                'descricao'          => $servico->descricao . ' (mensal ' . $calc['unidades'] . 'x)',
+                'max_parcelas'       => OrdemPagamento::MAX_PARCELAS,
+                'status'             => 'aberta',
+                'external_reference' => (string) \Illuminate\Support\Str::uuid(),
+            ]);
+            $o->eventos()->create(['status' => 'aberta', 'origem' => 'manual']);
+
+            $plano->ordem_pagamento_id = $o->id;
+            $plano->save();
+
+            return $o;
+        });
+
+        $this->avisarPaciente($cliente, $ordem);
+
+        return redirect()->back()->with('msg', 'Plano mensal criado. O cliente recebeu o link de pagamento no WhatsApp.');
     }
 
     // ── Staff: cancelar ordem (só se ainda não aprovada) ────────────────────

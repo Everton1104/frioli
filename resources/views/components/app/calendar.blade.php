@@ -49,14 +49,14 @@
     }
 
     .cal-disponivel {
-        background: #e9f7ef !important;
-        color: #1e7e34 !important;
+        background: #16a34a !important;
+        color: #ffffff !important;
         cursor: pointer;
     }
 
     .cal-bloqueado {
-        background: #f8d7da !important;
-        color: #842029 !important;
+        background: #dc2626 !important;
+        color: #ffffff !important;
     }
 
     .cal-selecionado {
@@ -141,12 +141,18 @@
         document.getElementById('data_fim').value = "";
     });
 
+    // Barbeiro ativo no formulário (select do staff / hidden do func ou do reagendamento).
+    function calFid() {
+        const el = document.querySelector('[name="funcionario_id"]');
+        return el ? el.value : '';
+    }
+
     async function carregarMes() {
         const ano = dataAtual.getFullYear();
         const mes = dataAtual.getMonth() + 1;
         sessionStorage.setItem(calStorageKey, `${ano}-${dataAtual.getMonth()}`);
         try {
-            const res = await axios.get(`/api/dias-disponiveis/${ano}/${mes}`);
+            const res = await axios.get(`/api/dias-disponiveis/${ano}/${mes}`, { params: { funcionario_id: calFid() } });
             diasDisponiveis = res.data;
         } catch (e) {
             diasDisponiveis = {};
@@ -295,6 +301,7 @@
         axios.get('/api/horarios/' + data, {
             params: {
                 servico_id,
+                funcionario_id: calFid(),
                 ignore_id: document.getElementById('agendamento_id')?.value ?? null,
                 especial,
                 duracao_min,
@@ -389,6 +396,19 @@
 
     document.addEventListener("DOMContentLoaded", function () {
         carregarMes();
+
+        // Trocou o barbeiro no formulário → recarrega dias/slots daquele barbeiro.
+        const fidEl = document.querySelector('[name="funcionario_id"]');
+        if (fidEl) {
+            fidEl.addEventListener('change', () => {
+                document.getElementById('horarios').innerHTML = '';
+                document.getElementById('dia_selecionado').value = '';
+                document.getElementById('hora_selecionada').value = '';
+                document.getElementById('data_inicio').value = '';
+                document.getElementById('data_fim').value = '';
+                carregarMes();
+            });
+        }
 
         @if(old('dia_selecionado') && old('hora_selecionada'))
             carregarMes().then(() => {

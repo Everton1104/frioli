@@ -7,5 +7,5 @@ use Illuminate\Database\Eloquent\Model;
 class DisponibilidadeModel extends Model
 {
     protected $table = 'disponibilidades';
-    protected $fillable = ['data', 'hora', 'created_by'];
+    protected $fillable = ['data', 'hora', 'created_by', 'funcionario_id'];
 }
