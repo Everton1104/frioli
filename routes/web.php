@@ -33,10 +33,11 @@ Route::middleware('guest')->prefix('agendar')->name('agendar.')->group(function 
 });
 
 // O booking em si (cliente autenticado e com WhatsApp verificado).
-// Só agendamento avulso: planos mensais são criados pelo staff (OrdemPagamentoController).
+// Avulso: qualquer cliente. Plano mensal pelo site: só cliente "indicado" pelo staff.
 Route::middleware(['auth', 'whatsapp.verified'])->prefix('agendar')->name('agendar.')->group(function () {
     Route::get('/',            [AgendaPublicaController::class, 'index'])->name('index');
     Route::post('/reservar',   [AgendaPublicaController::class, 'reservar'])->name('reservar');
+    Route::post('/mensal',     [AgendaPublicaController::class, 'mensalComprar'])->name('mensal');
 });
 
 Route::get('/api/mensal/calcular', [AgendaPublicaController::class, 'mensalCalcular']);
@@ -109,6 +110,23 @@ Route::get('/dashboard', function () {
         ? User::where('penalizado', 1)->where('excluido', 0)->orderByDesc('penalizado_em')->get()
         : collect();
 
+    // Intenções de agendamento (cliente penalizado pedindo horário no local): o
+    // barbeiro escolhido aprova/recusa. Func vê só as suas.
+    $intencoes = ($user->adm || $user->func)
+        ? AgendamentoModel::with(['user', 'servico'])
+            ->where('status', AgendamentoModel::STATUS_INTENCAO)
+            ->when($user->func, fn($q) => $q->where('funcionario_id', $user->id))
+            ->when($barbeiroSelecionado, fn($q) => $q->where('funcionario_id', $barbeiroSelecionado))
+            ->orderBy('data_inicio')->get()
+        : collect();
+    // Intenções do próprio cliente (card "Aguardando aprovação do barbeiro").
+    $minhasIntencoes = (!$user->adm && !$user->func)
+        ? AgendamentoModel::with(['servico', 'funcionario'])
+            ->where('user_id', $user->id)
+            ->where('status', AgendamentoModel::STATUS_INTENCAO)
+            ->orderBy('data_inicio')->get()
+        : collect();
+
     // Pacotes do cliente (tela "Meus pacotes" — validade/Negociar).
     $meusCreditos = (!$user->adm && !$user->func)
         ? \App\Models\CreditoServico::with('servico')->withCount('agendamentos')
@@ -125,7 +143,7 @@ Route::get('/dashboard', function () {
         ? \App\Models\PlanoMensal::with(['servico:id,descricao', 'funcionario:id,name'])->where('user_id', $user->id)->latest()->get()
         : collect();
 
-    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'ordensPagamento', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos'));
+    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'ordensPagamento', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos', 'intencoes', 'minhasIntencoes'));
 })->middleware(['auth', 'verified', 'whatsapp.verified'])->name('dashboard');
 
 Route::get('/api/horarios/{data}', [AgendaController::class, 'horarios']);
@@ -149,9 +167,12 @@ Route::middleware('auth')->group(function () {
 Route::resource('agenda', AgendaController::class)->middleware('auth');
 Route::post('agenda/{id}/confirmar', [AgendaController::class, 'confirmar'])->middleware('auth')->name('agenda.confirmar');
 Route::post('agenda/{id}/recusar',   [AgendaController::class, 'recusar'])->middleware('auth')->name('agenda.recusar');
+Route::post('agenda/{id}/aprovar-intencao', [AgendaController::class, 'aprovarIntencao'])->middleware('auth')->name('agenda.aprovar-intencao');
+Route::post('agenda/{id}/recusar-intencao', [AgendaController::class, 'recusarIntencao'])->middleware('auth')->name('agenda.recusar-intencao');
 Route::post('agenda/{id}/reenviar-lembrete', [AgendaController::class, 'reenviarLembrete'])->middleware('auth')->name('agenda.reenviar-lembrete');
 Route::post('agenda/{id}/comparecimento', [AgendaController::class, 'comparecimento'])->middleware('auth')->name('agenda.comparecimento');
 Route::post('usuario/{id}/remover-penalidade', [AgendaController::class, 'removerPenalidade'])->middleware('auth')->name('usuario.remover-penalidade');
+Route::post('usuario/{id}/indicar', [AgendaController::class, 'toggleIndicacao'])->middleware('auth')->name('usuario.indicar');
 Route::post('aviso/{id}/dispensar', [AgendaController::class, 'dispensarAviso'])->middleware('auth')->name('aviso.dispensar');
 Route::get('avisos-parcial', [AgendaController::class, 'avisosParcial'])->middleware('auth')->name('avisos.parcial');
 Route::get('agenda-search', [AgendaController::class, 'search'])->middleware('auth')->name('agenda.search');

@@ -33,6 +33,9 @@ class AgendamentoModel extends Model
     public const STATUS_PAGO_AGUARDANDO      = 'pago_aguardando';
     public const STATUS_RECUSADO             = 'recusado';
     public const STATUS_CANCELADO            = 'cancelado';
+    // Cliente penalizado pedindo agendamento no local: fica pendente de aprovação
+    // do barbeiro escolhido. NÃO ocupa slot (não bloqueia outros clientes).
+    public const STATUS_INTENCAO             = 'intencao_agendamento';
 
     // Statuses que OCUPAM o slot (bloqueiam sobreposição no horarios/store).
     public const OCUPANTES = [

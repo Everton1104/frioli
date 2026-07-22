@@ -170,6 +170,7 @@
                                     <th scope="col">WhatsApp</th>
                                     <th scope="col">Administrador</th>
                                     <th scope="col">Colaborador</th>
+                                    <th scope="col">Indicado</th>
                                 </tr>
                             </thead>
                             <tbody id="tbody-usuarios">
@@ -191,6 +192,17 @@
                                         <td>{{ $user->whatsapp ?? '—' }}</td>
                                         <td>{{ $user->adm > 0 ? 'Sim' : 'Não' }}</td>
                                         <td>{{ $user->func > 0 ? 'Sim' : 'Não' }}</td>
+                                        <td>
+                                            @if ($user->adm > 0 || $user->func > 0)
+                                                —
+                                            @else
+                                                <button class="btn btn-sm {{ $user->indicado ? 'btn-success' : 'btn-outline-secondary' }}"
+                                                        title="Liberar/bloquear compra de plano mensal pelo site"
+                                                        onclick="toggleIndicacao({{ $user->id }}, this)">
+                                                    {{ $user->indicado ? 'Sim' : 'Não' }}
+                                                </button>
+                                            @endif
+                                        </td>
                                     </tr>
                                 @endforeach
                             </tbody>
@@ -423,11 +435,11 @@
         @endif
 
         {{-- Planos mensais (horários fixos) --}}
-        @if(auth()->user()->adm || $planos->isNotEmpty())
+        @if(auth()->user()->adm || auth()->user()->func || $planos->isNotEmpty())
         <div class="card shadow my-3">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Planos mensais (horários fixos)</span>
-                @if(auth()->user()->adm)
+                @if(auth()->user()->adm || auth()->user()->func)
                 <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#modal-add-plano" style="background-color: var(--marrom); color:#1a1410">Novo plano</button>
                 @endif
             </div>
@@ -514,6 +526,50 @@
         </script>
         @endif
 
+        {{-- Intenções de agendamento: cliente penalizado pedindo horário no local --}}
+        @if((auth()->user()->adm || auth()->user()->func) && $intencoes->isNotEmpty())
+        <div class="card mb-3 border-info">
+            <div class="card-header fw-bold" style="background: rgba(13,110,253,.10)">
+                🕓 Intenções de agendamento ({{ $intencoes->count() }})
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead><tr><th>Cliente</th><th>Serviço</th><th>Quando</th><th class="text-end">Ação</th></tr></thead>
+                    <tbody>
+                        @foreach($intencoes as $p)
+                        <tr data-intencao="{{ $p->id }}">
+                            <td>{{ $p->user->name ?? '—' }}</td>
+                            <td>{{ $p->servico->descricao ?? '—' }}</td>
+                            <td>{{ \Carbon\Carbon::parse($p->data_inicio)->format('d/m H:i') }}</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-success btn-aprovar-intencao" data-id="{{ $p->id }}">Aprovar</button>
+                                <button class="btn btn-sm btn-outline-danger btn-recusar-intencao" data-id="{{ $p->id }}">Recusar</button>
+                            </td>
+                        </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <script>
+        $(function () {
+            $(document).on('click', '.btn-aprovar-intencao', function () {
+                const id = $(this).data('id');
+                axios.post(`{{ url('/') }}/agenda/${id}/aprovar-intencao`)
+                    .then(() => $(`tr[data-intencao="${id}"]`).fadeOut(250, function () { $(this).remove(); }))
+                    .catch(err => alert(err.response?.data?.error ?? 'Erro ao aprovar.'));
+            });
+            $(document).on('click', '.btn-recusar-intencao', function () {
+                const id = $(this).data('id');
+                if (!confirm('Recusar este pedido? O cliente continua penalizado e será avisado.')) return;
+                axios.post(`{{ url('/') }}/agenda/${id}/recusar-intencao`)
+                    .then(() => $(`tr[data-intencao="${id}"]`).fadeOut(250, function () { $(this).remove(); }))
+                    .catch(err => alert(err.response?.data?.error ?? 'Erro ao recusar.'));
+            });
+        });
+        </script>
+        @endif
+
         @if(auth()->user()->adm)
         {{-- Modal: Nova ordem de pagamento (Mercado Pago) --}}
         <x-app.modal id="modal-add-ordem" title="Nova ordem de pagamento" :btn="[['lbl' => 'Criar ordem', 'color' => 'primary', 'onclick' => '$(\'#form-add-ordem\').submit()']]">
@@ -551,7 +607,7 @@
                         <span id="ordem_liquido_valor" class="text-success fw-semibold">R$ 0,00</span>
                     </div>
                 </div>
-                <div class="form-text">O cliente poderá pagar em até <strong>12x</strong>, sendo <strong>6x sem juros</strong> (taxa paga pelo estabelecimento). Da 7ª à 12ª parcela o juros é pago pelo cliente.</div>
+                <div class="form-text">@if((int) (\App\Models\OrdemPagamento::MAX_PARCELAS) > 1) O cliente poderá pagar em até <strong>{{ \App\Models\OrdemPagamento::MAX_PARCELAS }}x</strong>. @else Pagamento à vista — cartão (crédito/débito) ou Pix. Sem parcelamento. @endif</div>
             </form>
         </x-app.modal>
 
@@ -692,7 +748,7 @@
                                                 <span class="text-muted">&mdash;</span>
                                             @endif
                                         </td>
-                                        <td>@if($ordem->installments) {{ $ordem->installments }}x @else até {{ $ordem->max_parcelas }}x @endif</td>
+                                        <td>@if($ordem->installments) {{ $ordem->installments }}x @elseif($ordem->max_parcelas > 1) até {{ $ordem->max_parcelas }}x @else À vista @endif</td>
                                         <td><span class="badge {{ $cls }}">{{ $rotulo }}</span></td>
                                         <td>
                                             @if ($ordem->status === 'aberta')
@@ -840,12 +896,14 @@
         @endif
 
         @if(!auth()->user()->adm && !auth()->user()->func)
-        {{-- Ação primária: agendar corte (respeita penalidade de no-show) --}}
+        {{-- Ação primária: agendar corte (pagamento online sempre liberado; no local, se penalizado, vira intenção) --}}
         @if(auth()->user()->isPenalizado())
-        <div class="alert alert-warning d-flex flex-wrap align-items-center gap-2 my-3">
-            <span>⚠️ Você está com uma pendência e não pode agendar online no momento. Regularize com a barbearia para voltar a agendar.</span>
-            <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
-               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Preciso regularizar minha pendência para voltar a agendar.') }}">Falar no WhatsApp</a>
+        <div class="alert alert-info d-flex flex-wrap align-items-center gap-3 my-3">
+            <div class="flex-grow-1">
+                <div class="fw-semibold">Você está com uma pendência</div>
+                <div class="small">Você pode agendar normalmente com <strong>pagamento online</strong>. Pedidos para <strong>pagar no local</strong> ficam sujeitos a aprovação do barbeiro.</div>
+            </div>
+            <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
         </div>
         @else
         <div class="card shadow my-3">
@@ -855,6 +913,24 @@
                     <div class="text-muted small">Escolha o barbeiro, o serviço, o dia e o horário e pague pelo site.</div>
                 </div>
                 <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
+            </div>
+        </div>
+        @endif
+
+        {{-- Intenções de agendamento do cliente (aguardando aprovação do barbeiro) --}}
+        @if($minhasIntencoes->isNotEmpty())
+        <div class="card shadow my-3 border-info">
+            <div class="card-header fw-bold">🕓 Aguardando aprovação do barbeiro</div>
+            <div class="card-body p-3">
+                @foreach($minhasIntencoes as $mi)
+                    <div class="border rounded px-2 py-1 mb-1 small">
+                        <strong>{{ $mi->servico->descricao ?? '—' }}</strong>
+                        · {{ $mi->funcionario->name ?? '—' }}
+                        · {{ \Carbon\Carbon::parse($mi->data_inicio)->format('d/m/Y H:i') }}
+                        <span class="badge bg-info text-dark">pagar no local</span>
+                        <span class="text-muted">— seu pedido foi enviado. Aguarde a resposta do barbeiro.</span>
+                    </div>
+                @endforeach
             </div>
         </div>
         @endif
@@ -879,9 +955,15 @@
                     @endforeach
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2">
-                    <span class="text-muted small">Aquisição apenas presencialmente na barbearia.</span>
-                    <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
-                       href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero saber mais sobre o pacote mensal.') }}">Quero assinar</a>
+                    @if(auth()->user()->isIndicado())
+                        <span class="text-muted small">Você está liberado para comprar ou renovar seu plano mensal pelo site.</span>
+                        <a class="btn btn-sm ms-auto" style="background-color: var(--marrom); color:#1a1410"
+                           href="{{ route('agendar.index') }}">Comprar / renovar plano</a>
+                    @else
+                        <span class="text-muted small">Aquisição apenas presencialmente na barbearia.</span>
+                        <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
+                           href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero saber mais sobre o pacote mensal.') }}">Quero assinar</a>
+                    @endif
                 </div>
             </div>
         </div>
@@ -1276,6 +1358,20 @@
             axios.post(`{{ url('/') }}/usuario/${userId}/remover-penalidade`)
                 .then(() => location.reload())
                 .catch(() => alert('Erro ao remover penalidade.'));
+        }
+
+        // Liga/desliga "indicado" (compra de plano mensal pelo site) direto na tabela.
+        function toggleIndicacao(userId, btn) {
+            axios.post(`{{ url('/') }}/usuario/${userId}/indicar`)
+                .then(res => {
+                    const on = !!res.data.indicado;
+                    btn.textContent = on ? 'Sim' : 'Não';
+                    btn.classList.toggle('btn-success', on);
+                    btn.classList.toggle('btn-outline-secondary', !on);
+                    const u = users.find(x => x.id == userId);
+                    if (u) u.indicado = on ? 1 : 0;
+                })
+                .catch(() => alert('Erro ao alterar indicação.'));
         }
 
         // ── Busca de cliente (nome ou WhatsApp) no modal de nova consulta ────
@@ -1889,6 +1985,12 @@
                         <svg style="cursor:pointer" onclick="editarUsuario(${id})" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
                     </td>`;
 
+            const indicadoTd = (user) => {
+                if (user.adm > 0 || user.func > 0) return '<td>—</td>';
+                const on = !!user.indicado;
+                return `<td><button class="btn btn-sm ${on ? 'btn-success' : 'btn-outline-secondary'}" title="Liberar/bloquear compra de plano mensal pelo site" onclick="toggleIndicacao(${user.id}, this)">${on ? 'Sim' : 'Não'}</button></td>`;
+            };
+
             tbody.innerHTML = paginated.data.map(user => {
                 // Mesma proteção do blade: super admin (id=1) só é editável por id=1;
                 // colaborador (func) só é editável por admin.
@@ -1904,6 +2006,7 @@
                     <td>${user.whatsapp ?? '—'}</td>
                     <td>${user.adm > 0 ? 'Sim' : 'Não'}</td>
                     <td>${user.func > 0 ? 'Sim' : 'Não'}</td>
+                    ${indicadoTd(user)}
                 </tr>`;
             }).join('');
 

@@ -70,7 +70,8 @@ class OrdemPagamentoController extends Controller
     // (avisarPaciente); ao pagar, o webhook ativa o plano.
     public function mensalStore(Request $request)
     {
-        abort_unless(auth()->user()->adm, 403);
+        // Adm ou funcionário podem criar um plano mensal para um cliente.
+        abort_unless(auth()->user()->adm || auth()->user()->func, 403);
 
         $dados = $request->validate([
             'user_id'        => ['required', 'integer', 'exists:users,id'],
@@ -174,7 +175,8 @@ class OrdemPagamentoController extends Controller
     // ── Staff: cancelar ordem (só se ainda não aprovada) ────────────────────
     public function cancelar(Request $request, $id)
     {
-        abort_unless(auth()->user()->adm, 403);
+        // Adm ou funcionário podem cancelar uma ordem não aprovada.
+        abort_unless(auth()->user()->adm || auth()->user()->func, 403);
 
         $ordem = OrdemPagamento::findOrFail($id);
         if ($ordem->status === 'approved') {

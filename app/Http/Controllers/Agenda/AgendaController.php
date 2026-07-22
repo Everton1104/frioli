@@ -838,6 +838,98 @@ class AgendaController extends Controller
         }
     }
 
+    /**
+     * Aprova uma "intenção de agendamento" de cliente penalizado (pagar no local):
+     * confirma o horário (se ainda livre) e REMOVE a penalidade do cliente, que volta
+     * a poder agendar normalmente. Func só aprova da própria agenda.
+     */
+    public function aprovarIntencao($id)
+    {
+        $user = auth()->user();
+        if (!$user->adm && !$user->func) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $ag = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
+        if ($user->func && (int) $ag->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+        if ($ag->status !== AgendamentoModel::STATUS_INTENCAO) {
+            return response()->json(['error' => 'Esta intenção já foi processada.'], 422);
+        }
+
+        // A intenção não trava slot — revalida disponibilidade antes de confirmar.
+        $conflito = AgendamentoModel::where('id', '!=', $ag->id)
+            ->where('data_inicio', '<', $ag->data_fim)
+            ->where('data_fim', '>', $ag->data_inicio)
+            ->where('funcionario_id', $ag->funcionario_id)
+            ->whereIn('status', AgendamentoModel::OCUPANTES)
+            ->exists();
+        if ($conflito) {
+            return response()->json(['error' => 'Esse horário não está mais disponível.'], 422);
+        }
+
+        $ag->confirmado        = 1;
+        $ag->confirmado_em     = now();
+        $ag->status            = AgendamentoModel::STATUS_CONFIRMADO;
+        $ag->pre_confirmado_em = $ag->pre_confirmado_em ?: now();
+        $ag->save();
+
+        // Aprovação libera o cliente: a penalidade é removida.
+        if ($ag->user && $ag->user->isPenalizado()) {
+            $ag->user->penalizado    = false;
+            $ag->user->penalizado_em = null;
+            $ag->user->save();
+        }
+
+        $this->notificarWhatsApp($ag, false);
+
+        return response()->json(['ok' => true, 'confirmado_em' => $ag->confirmado_em->format('d/m H:i')]);
+    }
+
+    /**
+     * Recusa uma "intenção de agendamento": o status vira recusado e a penalidade do
+     * cliente PERMANECE (só a aprovação a remove). Func só recusa da própria agenda.
+     */
+    public function recusarIntencao($id)
+    {
+        $user = auth()->user();
+        if (!$user->adm && !$user->func) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $ag = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
+        if ($user->func && (int) $ag->funcionario_id !== (int) $user->id) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+        if ($ag->status !== AgendamentoModel::STATUS_INTENCAO) {
+            return response()->json(['error' => 'Esta intenção já foi processada.'], 422);
+        }
+
+        $ag->status = AgendamentoModel::STATUS_RECUSADO;
+        $ag->save();
+
+        $this->notificarClienteIntencaoRecusada($ag);
+
+        return response()->json(['ok' => true]);
+    }
+
+    private function notificarClienteIntencaoRecusada(AgendamentoModel $agendamento): void
+    {
+        $user    = $agendamento->user;
+        $phoneId = env('PHONE_NUMBER_ID');
+        if (!$user || !$user->whatsapp || !$phoneId) {
+            return;
+        }
+        $msg = 'Olá, ' . ucfirst($user->name) . '! Seu pedido de agendamento no local não pôde ser aprovado pelo barbeiro. '
+             . 'Você segue podendo agendar pelo site com pagamento online, ou pode falar com a barbearia.';
+        try {
+            WhatsappController::enviarMsg($phoneId, $user->whatsapp, $msg);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::channel('single')->warning('[BOOKING] falha ao avisar cliente da recusa de intenção', ['msg' => $e->getMessage()]);
+        }
+    }
+
     public function edit($id)
     {
         $user        = auth()->user();
@@ -966,6 +1058,25 @@ class AgendaController extends Controller
         $alvo->save();
 
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Alterna a marcação de "indicado" do cliente — libera/bloqueia a compra e
+     * renovação de plano mensal pelo site (auto-atendimento). Adm ou func.
+     */
+    public function toggleIndicacao($userId)
+    {
+        $user = auth()->user();
+        if (!$user->adm && !$user->func) {
+            return response()->json(['error' => 'Não autorizado'], 403);
+        }
+
+        $alvo = User::findOrFail($userId);
+        $alvo->indicado    = !$alvo->indicado;
+        $alvo->indicado_em = $alvo->indicado ? now() : null;
+        $alvo->save();
+
+        return response()->json(['ok' => true, 'indicado' => (bool) $alvo->indicado]);
     }
 
     /**

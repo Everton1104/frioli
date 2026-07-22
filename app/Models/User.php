@@ -28,6 +28,8 @@ class User extends Authenticatable
         'excluido',
         'penalizado',
         'penalizado_em',
+        'indicado',
+        'indicado_em',
         'whatsapp',
         'whatsapp_code',
         'whatsapp_code_expires_at',
@@ -58,6 +60,8 @@ class User extends Authenticatable
             'whatsapp_verified_at'     => 'datetime',
             'penalizado'               => 'boolean',
             'penalizado_em'            => 'datetime',
+            'indicado'                  => 'boolean',
+            'indicado_em'               => 'datetime',
         ];
     }
 
@@ -70,6 +74,12 @@ class User extends Authenticatable
     public function isPenalizado(): bool
     {
         return (bool) $this->penalizado;
+    }
+
+    // Cliente "indicado" pelo staff: liberado para comprar/renovar plano mensal pelo site.
+    public function isIndicado(): bool
+    {
+        return (bool) $this->indicado;
     }
 
     public function whatsappVerificado(): bool

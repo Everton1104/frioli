@@ -138,7 +138,7 @@ class RegisteredUserController extends Controller
         abort_unless(auth()->user()->adm || auth()->user()->func, 403);
 
         $q      = trim($request->q);
-        $campos = ['id', 'name', 'whatsapp', 'adm', 'func'];
+        $campos = ['id', 'name', 'whatsapp', 'adm', 'func', 'indicado'];
 
         $users = User::select($campos)
             ->where('excluido', 0)
