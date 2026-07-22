@@ -15,11 +15,20 @@
     .login-content { position: relative; z-index: 2; }
     .login-logo { filter: drop-shadow(0 8px 18px rgba(0,0,0,.45)); }
     .login-card { background: linear-gradient(155deg, #f1dc8e 0%, #e2c060 100%) !important; box-shadow: 0 16px 40px rgba(0,0,0,.45) !important; }
-    .login-card button[type="submit"] { background-color: #1a1410 !important; border-color: #1a1410 !important; color: #f3e6c4 !important; }
-    .login-card button[type="submit"]:hover { background-color: #000 !important; border-color: #000 !important; }
-    /* Textos pretos sobre o card dourado. Força TODO texto dentro do card (inclusive
-       placeholder) para preto; o botão de submit mantém texto creme pela regra específica. */
-    .login-card, .login-card *, .login-card input::placeholder, .login-card textarea::placeholder { color: #000 !important; }
+    /* Card dourado claro => TODO o texto deve ser PRETO p/ contraste. O prefixo
+       [data-bs-theme="dark"] .login-screen eleva a especificidade a (0,3,0) e vence as
+       regras utilitárias do app.blade.php, que pintam .text-gray-* de creme claro
+       (#ece4d6) no dark mode — sem isto, o "Olá, ..." e os links das telas de auth
+       (Breeze) ficam ilegíveis sobre o dourado. O botão de submit é exceção (creme). */
+    [data-bs-theme="dark"] .login-screen .login-card,
+    [data-bs-theme="dark"] .login-screen .login-card * { color: #000 !important; }
+    /* Inputs sempre legíveis: fundo branco + texto preto (preto sobre preto = ilegível). */
+    [data-bs-theme="dark"] .login-screen .login-card input,
+    [data-bs-theme="dark"] .login-screen .login-card textarea,
+    [data-bs-theme="dark"] .login-screen .login-card select { background-color: #fff !important; color: #000 !important; }
+    /* Botão de submit: marrom-escuro com texto creme (exceção ao preto acima). */
+    [data-bs-theme="dark"] .login-screen .login-card button[type="submit"] { background-color: #1a1410 !important; border-color: #1a1410 !important; color: #f3e6c4 !important; }
+    [data-bs-theme="dark"] .login-screen .login-card button[type="submit"]:hover { background-color: #000 !important; border-color: #000 !important; }
 </style>
 @endsection
 @section('main')

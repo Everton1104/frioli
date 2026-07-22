@@ -14,7 +14,7 @@ class OrdemPagamento extends Model
     protected $table = 'ordem_pagamentos';
 
     // Teto de parcelas oferecidas (o cliente escolhe 1 a 12x no checkout).
-    public const MAX_PARCELAS = 12;
+    public const MAX_PARCELAS = 1; // Pagamento à vista (cartão ou Pix) — sem parcelamento.
 
     // Parcelas sem juros (taxa paga pelo estabelecimento); da 7ª à 12ª o juros
     // é pago pelo cliente. A regra efetiva é configurada na conta InfinitePay.
