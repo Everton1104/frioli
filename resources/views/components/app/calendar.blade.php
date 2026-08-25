@@ -59,6 +59,15 @@
         color: #ffffff !important;
     }
 
+    /* Dia não liberado mas com agendamento fixo (ex.: plano mensal).
+       Sobrepõe o vermelho do cal-bloqueado (é sempre aditivo a ele). */
+    #mgm-cal-dias .cal-fixos {
+        background: #fff3cd !important;
+        color: #664d03 !important;
+        border: 1px solid #f0ad4e !important;
+        font-weight: 700;
+    }
+
     .cal-selecionado {
         background: #3e8e41 !important;
         color: white !important;

@@ -294,7 +294,7 @@ class MercadoPagoWebhookController extends Controller
             WhatsappController::enviarModelo(
                 env('PHONE_NUMBER_ID'),
                 $paciente->whatsapp,
-                env('WHATSAPP_TEMPLATE_PAGAMENTO_APROVADO', 'pagamento_confirmado'),
+                env('WHATSAPP_TEMPLATE_PAGAMENTO_APROVADO', 'pagamento_confirmado_fr'),
                 [
                     ['type' => 'text', 'text' => $nome],
                     ['type' => 'text', 'text' => $valor],

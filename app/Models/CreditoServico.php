@@ -24,10 +24,14 @@ class CreditoServico extends Model
         return $this->belongsTo(ServicosModel::class, 'servico_id');
     }
 
-    // Agendamentos vivos que consomem deste pacote (inclui encaixes de outros serviços).
+    // Agendamentos vivos que consomem deste pacote (inclui encaixes de outros
+    // serviços). Recusado/cancelado NÃO consome: a unidade volta ao saldo do
+    // pacote automaticamente (conta em usadas()/restantes()/ordinalDe() e no
+    // withCount do dashboard, que usam esta relação).
     public function agendamentos()
     {
-        return $this->hasMany(AgendamentoModel::class, 'credito_servico_id');
+        return $this->hasMany(AgendamentoModel::class, 'credito_servico_id')
+            ->whereNotIn('status', [AgendamentoModel::STATUS_RECUSADO, AgendamentoModel::STATUS_CANCELADO]);
     }
 
     public function usadas(): int

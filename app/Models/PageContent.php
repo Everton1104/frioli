@@ -15,6 +15,18 @@ class PageContent extends Model
     }
 
     /**
+     * Mesma coisa que get(), mas o default vem do catálogo config/content.php
+     * (fonte única dos textos padrão do site editorial). Assim a view não
+     * duplica o texto: ele vive em config/content.php, a migration cria a
+     * linha editável a partir dele, e aqui caímos no default se a linha ainda
+     * não existir.
+     */
+    public static function def(string $section, string $key): string
+    {
+        return static::get($section, $key, (string) config("content.$section.$key.value", ''));
+    }
+
+    /**
      * URL de um conteúdo do tipo imagem. Se houver valor (arquivo em conteudo/),
      * devolve a URL dele; senão devolve o $defaultUrl (ex.: Storage::url de um fixo).
      */

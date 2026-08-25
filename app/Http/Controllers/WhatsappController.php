@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AgendamentoModel;
 use App\Models\Aviso;
 use App\Models\WhatsappLog;
+use App\Services\PlanoMensalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -100,9 +101,12 @@ class WhatsappController extends Controller
     // entre o webhook direto da Meta (getMsgs) e o callback do gateway (inbound).
     private function rotearButtonPayload(string $phoneId, string $number, string $payload): void
     {
+        // Lembrete único da véspera: o botão confirmar_ faz a confirmação oficial.
+        // Mantém compatibilidade com lembretes antigos já enviados com confirmar_pre_
+        // (tratados também como confirmação oficial — upgrade do antigo "pré-confirmar").
         if (str_starts_with($payload, 'confirmar_pre_')) {
             $id = (int) str_replace('confirmar_pre_', '', $payload);
-            $this->tratarPreConfirmacao($phoneId, $number, $id);
+            $this->tratarConfirmacao($phoneId, $number, $id);
         } elseif (str_starts_with($payload, 'confirmar_')) {
             $id = (int) str_replace('confirmar_', '', $payload);
             $this->tratarConfirmacao($phoneId, $number, $id);
@@ -154,10 +158,10 @@ class WhatsappController extends Controller
 
     // ── Tratamento de respostas de botões ────────────────────────────────────
 
-    // Pré-confirmação: cliente respondeu o lembrete da véspera.
-    private function tratarPreConfirmacao(string $phoneId, string $number, int $agendamentoId): void
+    // Confirmação oficial: cliente respondeu o lembrete da véspera (ou staff confirmou manualmente).
+    private function tratarConfirmacao(string $phoneId, string $number, int $agendamentoId): void
     {
-        $agendamento = AgendamentoModel::with('user')->find($agendamentoId);
+        $agendamento = AgendamentoModel::with(['user', 'planoMensal.itens.servico'])->find($agendamentoId);
         if (!$agendamento) return;
 
         // Botão de um agendamento que já passou: ignora o clique (evita confirmar
@@ -167,35 +171,11 @@ class WhatsappController extends Controller
             return;
         }
 
-        // Mantém o primeiro horário de pré-confirmação; ignora cliques repetidos.
-        if (!$agendamento->pre_confirmado_em) {
-            $agendamento->pre_confirmado_em = now();
-            $agendamento->save();
-        }
-
-        $nome          = ucfirst($agendamento->user->name ?? 'você');
-        $nomeComercial = env('WHATSAPP_NOME_COMERCIAL', config('app.name'));
-        $data          = Carbon::parse($agendamento->data_inicio)
-                             ->locale('pt_BR')
-                             ->translatedFormat('d \d\e F');
-        $hora          = Carbon::parse($agendamento->data_inicio)->format('H:i');
-
-        self::enviarMsg($phoneId, $number,
-            "Obrigado por confirmar, {$nome}! ✅ Sua presença para o dia *{$data}* às *{$hora}* está pré-confirmada.\n\n"
-            . "No dia do agendamento enviaremos uma última confirmação. Até lá! 😊"
-        );
-    }
-
-    // Confirmação oficial: cliente respondeu o lembrete de 2h antes (ou staff confirmou manualmente).
-    private function tratarConfirmacao(string $phoneId, string $number, int $agendamentoId): void
-    {
-        $agendamento = AgendamentoModel::with('user')->find($agendamentoId);
-        if (!$agendamento) return;
-
-        // Botão de um agendamento que já passou: ignora o clique (evita confirmar
-        // consultas antigas via lembrete expirado).
-        if (Carbon::parse($agendamento->data_inicio)->isPast()) {
-            self::enviarMsg($phoneId, $number, 'Este agendamento já passou e não pode mais ser confirmado. Se precisar de um novo horário, fale com a equipe. 😊');
+        // Reserva "sem saldo" (slot fixo de plano mensal sem ciclo pago): o cliente
+        // não pode confirmar pelo botão — precisa renovar o plano (ou pagar a visita
+        // extra). Espelha o bloqueio do confirmar manual do staff.
+        if ($agendamento->status === AgendamentoModel::STATUS_RESERVA_RENOVACAO) {
+            self::enviarMsg($phoneId, $number, 'Seu plano está sem saldo neste período. Renove o plano (ou pague a visita extra) para garantir o horário. Qualquer dúvida, fale com a barbearia. 😊');
             return;
         }
 
@@ -205,6 +185,7 @@ class WhatsappController extends Controller
 
         $agendamento->confirmado    = true;
         $agendamento->confirmado_em = now();
+        $agendamento->status        = AgendamentoModel::STATUS_CONFIRMADO;
         // Confirmar a consulta vale também como pré-confirmação: se o cliente
         // confirma direto (ex.: pelo "Enviar pedido de confirmação agora", antes
         // da véspera), considera as duas etapas concluídas.
@@ -212,6 +193,9 @@ class WhatsappController extends Controller
             $agendamento->pre_confirmado_em = now();
         }
         $agendamento->save();
+
+        // O desconto da visita do plano mensal é por data (command planos:descontar-visitas),
+        // não na confirmação. Aqui só marcamos a presença.
 
         // Cliente decidiu confirmar: dispensa qualquer pedido de reagendamento em
         // aberto (evita estado contraditório se antes havia clicado em "reagendar").
@@ -227,19 +211,19 @@ class WhatsappController extends Controller
                              ->locale('pt_BR')
                              ->translatedFormat('d \d\e F');
         $hora          = Carbon::parse($agendamento->data_inicio)->format('H:i');
-        $endereco      = env('WHATSAPP_ENDERECO', 'Rua 23 de Maio, n° 790, Vila Vianelo, Jundiaí - Sala n.º 35 - 3° andar Bloco A "Condomínio Centro Comercial Tebas"');
-        $maps          = env('WHATSAPP_MAPS_LINK', 'https://maps.app.goo.gl/gPbt9ZuejqqJRrA56');
+        $endereco      = env('WHATSAPP_ENDERECO', 'R. do Retiro, 329 - Vila Virginia, Jundiaí - SP, 13201-030');
+        $maps          = env('WHATSAPP_MAPS_LINK', 'https://maps.app.goo.gl/YpWyqD8E9KypARkg6');
 
         self::enviarMsg($phoneId, $number,
             "Perfeito, {$nome}! ✅ Sua presença está confirmada para o dia *{$data}* às *{$hora}*.\n\n"
             . "Muito obrigado por confirmar! Estamos te esperando na {$nomeComercial}. Até lá! 😊"
         );
 
-        // Mensagem separada com o endereço da clínica + link do Google Maps em texto.
+        // Mensagem separada com o endereço da barbearia + link do Google Maps em texto.
         // (O botão interativo cta_url não estava sendo entregue; link em texto é
         // clicável no WhatsApp e usa o mesmo enviarMsg que funciona de forma confiável.)
         self::enviarMsg($phoneId, $number,
-            "📍 *Endereço da clínica:*\n{$endereco}\n\n"
+            "📍 *Endereço:*\n{$endereco}\n\n"
             . "🗺️ Como chegar: {$maps}"
         );
     }
@@ -445,6 +429,49 @@ class WhatsappController extends Controller
             return ['erro' => 1, 'msg' => $err['error']['message'] ?? 'Erro desconhecido'];
         } catch (\Exception $e) {
             return ['erro' => 1, 'msg' => $e->getMessage()];
+        }
+    }
+
+    // ── Avisos de negócio ─────────────────────────────────────────────────────
+
+    /**
+     * Avisa todos os staff (adm/func) que um slot fixo mensal acabou de ser reservado
+     * para um cliente. Best-effort: falha de envio não interrompe o fluxo.
+     */
+    public static function avisarStaffReservaSlot(\App\Models\PlanoMensal $plano): void
+    {
+        $phoneId = env('PHONE_NUMBER_ID');
+        if (!$phoneId || !$plano->user || !$plano->assinatura) {
+            return;
+        }
+
+        $dias    = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+        $nome    = ucfirst($plano->user->name ?? 'cliente');
+        $barbeiro = $plano->funcionario->name ?? '—';
+        $dia     = $dias[$plano->dia_semana] ?? '';
+        $hora    = \Illuminate\Support\Carbon::parse($plano->hora)->format('H:i');
+        $itens   = $plano->descricaoItens();
+        $visitas = (int) $plano->unidades_total;
+
+        $msg = "📅 Slot fixo mensal reservado!\n\n"
+             . "👤 {$nome}\n"
+             . "✂️ {$itens} ({$visitas} visitas)\n"
+             . "💈 {$barbeiro}\n"
+             . "🗓️ Toda {$dia} às {$hora}";
+
+        $staff = \App\Models\User::where(function ($q) {
+                $q->where('adm', 1)->orWhere('func', 1);
+            })
+            ->whereNotNull('whatsapp')
+            ->where('excluido', 0)
+            ->get();
+
+        foreach ($staff as $s) {
+            try {
+                self::enviarMsg($phoneId, $s->whatsapp, $msg);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::channel('single')->warning('[Plano] falha ao avisar staff de reserva', ['msg' => $e->getMessage()]);
+            }
         }
     }
 

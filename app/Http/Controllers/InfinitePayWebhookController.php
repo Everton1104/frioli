@@ -167,6 +167,15 @@ class InfinitePayWebhookController extends Controller
                 'payload'       => $res,
             ]);
 
+            Log::channel('single')->info('[INFINITEPAY] ORDEM APROVADA', [
+                'ordem'        => $ordem->id,
+                'valor'        => $ordem->valor,
+                'status_ant'   => $anterior,
+                'transaction'  => $idKey !== '' ? $idKey : null,
+                'installments' => $ordem->installments ?? null,
+                'method'       => $ordem->payment_method_id ?? null,
+            ]);
+
             // Só avisa o paciente na transição para aprovado.
             if ($anterior !== 'approved') {
                 $this->confirmarPagamento($ordem);
@@ -188,7 +197,17 @@ class InfinitePayWebhookController extends Controller
         }
 
         $ag = $ordem->agendamento()->with('user', 'servico')->first();
-        if (!$ag || $ag->status !== AgendamentoModel::STATUS_AGUARDANDO_PAGAMENTO) {
+        if (!$ag) {
+            return;
+        }
+
+        // Booking público (aguardando_pagamento) ou visita extra de plano mensal
+        // (reserva_renovacao — slot reservado sem saldo, paga à parte na 5ª semana).
+        $elegivel = [
+            AgendamentoModel::STATUS_AGUARDANDO_PAGAMENTO,
+            AgendamentoModel::STATUS_RESERVA_RENOVACAO,
+        ];
+        if (!in_array($ag->status, $elegivel, true)) {
             return;
         }
 
@@ -260,7 +279,7 @@ class InfinitePayWebhookController extends Controller
             WhatsappController::enviarModelo(
                 env('PHONE_NUMBER_ID'),
                 $paciente->whatsapp,
-                env('WHATSAPP_TEMPLATE_PAGAMENTO_APROVADO', 'pagamento_confirmado'),
+                env('WHATSAPP_TEMPLATE_PAGAMENTO_APROVADO', 'pagamento_confirmado_fr'),
                 [
                     ['type' => 'text', 'text' => $nome],
                     ['type' => 'text', 'text' => $valor],

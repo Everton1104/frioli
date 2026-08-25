@@ -25,6 +25,9 @@ class AgendamentoModel extends Model
         'compareceu',
         'pagar_no_local',
         'plano_mensal_id',
+        'consumo_plano',
+        'assinatura_id',
+        'plano_ordem',
     ];
 
     // Ciclo de vida do booking público. Default "confirmado" (staff cria direto).
@@ -36,12 +39,16 @@ class AgendamentoModel extends Model
     // Cliente penalizado pedindo agendamento no local: fica pendente de aprovação
     // do barbeiro escolhido. NÃO ocupa slot (não bloqueia outros clientes).
     public const STATUS_INTENCAO             = 'intencao_agendamento';
+    // Slot fixo de plano mensal reservado sem saldo (assinatura ativa, aguardando
+    // renovação): OCUPA o slot (bloqueia outros clientes) e sinaliza ao staff.
+    public const STATUS_RESERVA_RENOVACAO    = 'reserva_renovacao';
 
     // Statuses que OCUPAM o slot (bloqueiam sobreposição no horarios/store).
     public const OCUPANTES = [
         self::STATUS_CONFIRMADO,
         self::STATUS_AGUARDANDO_PAGAMENTO,
         self::STATUS_PAGO_AGUARDANDO,
+        self::STATUS_RESERVA_RENOVACAO,
     ];
 
     protected $casts = [
@@ -54,6 +61,8 @@ class AgendamentoModel extends Model
         'confirmado_em'      => 'datetime',
         'compareceu'         => 'boolean',
         'pagar_no_local'     => 'boolean',
+        'consumo_plano'      => 'array',
+        'plano_ordem'        => 'integer',
     ];
 
     // Serializa as datas no horário local (sem conversão p/ UTC) e com espaço,
@@ -63,19 +72,14 @@ class AgendamentoModel extends Model
         return $date->format('Y-m-d H:i:s');
     }
 
-    // Expõe o status de cada lembrete e o nome de exibição do serviço no JSON
+    // Expõe o status do lembrete da véspera e o nome de exibição do serviço no JSON
     // (consumidos pelos cards do dashboard).
-    protected $appends = ['lembrete_24h', 'lembrete_2h', 'servico_display'];
+    protected $appends = ['lembrete_24h', 'servico_display'];
 
     // 'enviado' | 'erro' | null (ainda não disparado)
     public function getLembrete24hAttribute(): ?string
     {
         return $this->lembretes->firstWhere('tipo', '24h')?->status;
-    }
-
-    public function getLembrete2hAttribute(): ?string
-    {
-        return $this->lembretes->firstWhere('tipo', '2h')?->status;
     }
 
     public function servico()
@@ -108,6 +112,37 @@ class AgendamentoModel extends Model
         }
 
         return $nome;
+    }
+
+    /**
+     * Saldo do pacote/plano para o lembrete da véspera (texto cru, sem prefixo).
+     * Reutilizado pelo lembrete automático (lembretes:enviar) e pelo reenvio manual,
+     * para os dois caminhos não divergirem.
+     *  - Plano mensal com itens: "corte 1/4, barba 1/4" (restantesPorServico).
+     *  - Pacote avulso (crédito) qtd>1: "corte 2/5".
+     *  - Avulso sem pacote/plano ou unidade única: "" (vazio → lembrete só com a hora).
+     */
+    public function saldoPacoteTexto(): string
+    {
+        if ($this->plano_mensal_id && $this->planoMensal) {
+            $p = $this->planoMensal;
+            if ($p->itens->isNotEmpty()) {
+                // "1/4 usadas · corte 1/4, barba 1/2" — total de visitas + por serviço.
+                return $p->unidades_usadas . '/' . $p->unidades_total . ' usadas'
+                    . ' · ' . $p->restantesPorServico();
+            }
+            return '';
+        }
+
+        if ($this->credito_servico_id && $this->creditoServico) {
+            $credito = $this->creditoServico;
+            if ($credito->quantidade > 1) {
+                $nome = strtolower($credito->servico->descricao ?? 'serviço');
+                return "{$nome} {$credito->ordinalDe($this)}/{$credito->quantidade}";
+            }
+        }
+
+        return '';
     }
 
     public function user()

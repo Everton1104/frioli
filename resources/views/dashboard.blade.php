@@ -5,6 +5,17 @@
         .card-header {
             background-color: var(--branco);
         }
+        /* Seta de "abre/fecha" nos cards recolhíveis */
+        .card-seta {
+            margin-left: auto;
+            font-size: .8rem;
+            opacity: .7;
+            transition: transform .2s ease;
+            user-select: none;
+        }
+        .card-header[aria-expanded="true"] .card-seta {
+            transform: rotate(180deg);
+        }
         .consulta-card {
             border-radius: 12px;
             border-left: 6px solid #28a745;
@@ -23,6 +34,10 @@
         }
         .consulta-mensal {
             border-left-color: #0d6efd;
+        }
+        .consulta-reserva {
+            border-left-color: #dc3545;
+            background-color: rgba(220, 53, 69, 0.08);
         }
         .consulta-data {
             font-weight: bold;
@@ -115,7 +130,7 @@
                     <div class="row g-2 align-items-end">
                         <div class="col-7">
                             <select id="credito-servico" class="form-select form-select-sm">
-                                @foreach($servicos->where('status', 1) as $s)
+                                @foreach($servicos->where('status', 1)->where('recorrente', 0) as $s)
                                     <option value="{{ $s->id }}">{{ $s->descricao }}</option>
                                 @endforeach
                             </select>
@@ -141,14 +156,30 @@
             </form>
         </x-app.modal>
 
+        {{-- Modal Excluir Usuário DEFINITIVAMENTE (hard delete — só admin) --}}
         @if(auth()->user()->adm)
+        <x-app.modal id="modal-exc-usuario-hard" title="Excluir DEFINITIVAMENTE" :btn="[['lbl' => 'Excluir definitivo', 'color' => 'danger', 'onclick' => '$(\'#form-excluir-usuario-hard\').submit()']]">
+            <form id="form-excluir-usuario-hard" action="{{ route('usuario.excluir-definitivo') }}" method="post">
+                @csrf
+                @method('post')
+                <input class="d-none" type="text" name="id" id="excluir-usuario-hard-id" value="">
+                <p class="fs-4 text-danger fw-bold">⚠ Ação irreversível</p>
+                <p>Excluir <strong>definitivamente</strong> o usuário <span id="excluir-usuario-hard-nome"></span>?</p>
+                <p class="text-danger small">Remove a conta <strong>e todo o histórico</strong> do cliente: agendamentos, avisos, pacotes (créditos), planos mensais e ordens de pagamento. <strong>Não dá para desfazer.</strong></p>
+            </form>
+        </x-app.modal>
+        @endif
+
+        @if(auth()->user()->adm || auth()->user()->func)
         {{-- Contas de usuário --}}
         <div class="card shadow my-3">
-            <div class="card-header"
+            <div class="card-header d-flex align-items-center"
                 data-bs-toggle="collapse"
                 data-bs-target="#collapseUsuarios"
+                aria-expanded="false"
                 style="cursor: pointer">
-                Controle de Contas de Usuário
+                <span>Controle de Contas de Usuário</span>
+                <span class="card-seta">▾</span>
             </div>
             <div id="collapseUsuarios" class="collapse">
                 <div class="card-body p-3 row">
@@ -170,20 +201,19 @@
                                     <th scope="col">WhatsApp</th>
                                     <th scope="col">Administrador</th>
                                     <th scope="col">Colaborador</th>
-                                    <th scope="col">Indicado</th>
                                 </tr>
                             </thead>
                             <tbody id="tbody-usuarios">
                                 @foreach ($users as $user)
                                     <tr>
                                         @if ($user->id != 1 || Auth()->user()->id == 1)
-                                            @if ($user->func != 1 || Auth()->user()->adm == 1)
+                                            @if (($user->func != 1 || Auth()->user()->adm == 1) && (!$user->adm || Auth()->user()->id == 1))
                                                 <td class="d-flex">
                                                     <svg style="cursor: pointer" onclick="excluirUsuario({{$user->id}},'{{$user->name}}')" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#dc3545"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
-                                                    <svg style="cursor: pointer" onclick="editarUsuario({{$user->id}})" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
+                                                    <svg style="cursor: pointer" onclick="editarUsuario({{$user->id}})" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg> @if(auth()->user()->adm) <svg style="cursor: pointer" title="Excluir DEFINITIVAMENTE (irreversível)" onclick="excluirUsuarioHard({{$user->id}},'{{$user->name}}')" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#842029"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8.46 11.88l1.41-1.41L12 12.59l2.12-2.12 1.41 1.41L13.41 14l2.12 2.12-1.41 1.41L12 15.41l-2.12 2.12-1.41-1.41L10.59 14l-2.13-2.12zM15.5 4l-1-1h-5l-1 1H5v2h14V4z"/></svg> @endif
                                                 </td>
                                             @else
-                                                <td>COLAB</td>
+                                                <td>{{ $user->adm ? 'ADM' : 'COLAB' }}</td>
                                             @endif
                                         @else
                                             <td>ADM</td>
@@ -192,17 +222,6 @@
                                         <td>{{ $user->whatsapp ?? '—' }}</td>
                                         <td>{{ $user->adm > 0 ? 'Sim' : 'Não' }}</td>
                                         <td>{{ $user->func > 0 ? 'Sim' : 'Não' }}</td>
-                                        <td>
-                                            @if ($user->adm > 0 || $user->func > 0)
-                                                —
-                                            @else
-                                                <button class="btn btn-sm {{ $user->indicado ? 'btn-success' : 'btn-outline-secondary' }}"
-                                                        title="Liberar/bloquear compra de plano mensal pelo site"
-                                                        onclick="toggleIndicacao({{ $user->id }}, this)">
-                                                    {{ $user->indicado ? 'Sim' : 'Não' }}
-                                                </button>
-                                            @endif
-                                        </td>
                                     </tr>
                                 @endforeach
                             </tbody>
@@ -225,10 +244,26 @@
                 <p class="fs-5 my-2">Duração do Serviço</p>
                 <x-app.select label="Horas" name="duracao_h" required="true" :options="['00'=>'00', '01'=>'01', '02'=>'02']" />
                 <x-app.select label="Minutos" name="duracao_m" required="true" :options="['00'=>'00', '15'=>'15', '30'=>'30', '45'=>'45']" />
-                <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor" id="servico_valor" step="0.01" min="0" placeholder="Ex.: 50.00" />
+                <x-app.input label="Repasse ao funcionário (%) — parte do valor que vai para o barbeiro" type="number" name="repasse_percent" id="servico_repasse" step="0.01" min="0" max="100" placeholder="Ex.: 50" />
+                <div id="wrap_valor_add">
+                    <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor" id="servico_valor" step="0.01" min="0" placeholder="Ex.: 50.00" />
+                </div>
                 <div class="form-check mt-3">
                     <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="servico_recorrente">
                     <label class="form-check-label" for="servico_recorrente">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
+                </div>
+                <div id="add-combo-editor" class="mt-2 ps-3 border-start" style="display:none">
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" value="1" name="mostrar_clientes" id="add_mostrar_clientes">
+                        <label class="form-check-label" for="add_mostrar_clientes">Mostrar este pacote aos clientes (aparece no painel deles, com valores e itens)</label>
+                    </div>
+                    <div class="form-text fw-semibold mt-1">Composição do pacote (preço com desconto de cada serviço)</div>
+                    <div id="add-composicao" class="mb-2"></div>
+                    <div class="form-text fw-semibold">Distribuição das 4 visitas base</div>
+                    <div id="add-distribuicao" class="mb-2"></div>
+                    <div class="form-text">Total do pacote: <strong id="add-total">R$ 0,00</strong></div>
+                    <input type="hidden" name="composicao" id="add_composicao" value="">
+                    <input type="hidden" name="distribuicao" id="add_distribuicao" value="">
                 </div>
             </form>
         </x-app.modal>
@@ -243,7 +278,10 @@
                 <p class="fs-5 my-2">Duração do Serviço</p>
                 <x-app.select label="Horas" name="duracao_h_edt_servico" required="true" :options="['00'=>'00', '01'=>'01', '02'=>'02']" />
                 <x-app.select label="Minutos" name="duracao_m_edt_servico" required="true" :options="['00'=>'00', '15'=>'15', '30'=>'30', '45'=>'45']" />
-                <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor_edt_servico" id="valor_edt_servico" step="0.01" min="0" placeholder="Ex.: 50.00" />
+                <x-app.input label="Repasse ao funcionário (%) — parte do valor que vai para o barbeiro" type="number" name="repasse_percent_edt_servico" id="repasse_percent_edt_servico" step="0.01" min="0" max="100" placeholder="Ex.: 50" />
+                <div id="wrap_valor_edt">
+                    <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor_edt_servico" id="valor_edt_servico" step="0.01" min="0" placeholder="Ex.: 50.00" />
+                </div>
                 <x-app.radio name="status_servico"
                     :options="[
                         '0' => 'INATIVO',
@@ -254,8 +292,108 @@
                     <input class="form-check-input" type="checkbox" value="1" name="recorrente_edt_servico" id="recorrente_edt_servico">
                     <label class="form-check-label" for="recorrente_edt_servico">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
                 </div>
+                <div id="edt-combo-editor" class="mt-2 ps-3 border-start" style="display:none">
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" value="1" name="mostrar_clientes_edt_servico" id="edt_mostrar_clientes">
+                        <label class="form-check-label" for="edt_mostrar_clientes">Mostrar este pacote aos clientes (aparece no painel deles, com valores e itens)</label>
+                    </div>
+                    <div class="form-text fw-semibold mt-1">Composição do pacote (preço com desconto de cada serviço)</div>
+                    <div id="edt-composicao" class="mb-2"></div>
+                    <div class="form-text fw-semibold">Distribuição das 4 visitas base</div>
+                    <div id="edt-distribuicao" class="mb-2"></div>
+                    <div class="form-text">Total do pacote: <strong id="edt-total">R$ 0,00</strong></div>
+                    <input type="hidden" name="composicao_edt_servico" id="edt_composicao" value="">
+                    <input type="hidden" name="distribuicao_edt_servico" id="edt_distribuicao" value="">
+                </div>
             </form>
         </x-app.modal>
+        @php
+            $servicosComunsJs = $servicos->where('recorrente', 0)->where('visivel_cliente', 1)->values()
+                ->map(fn($s) => ['id' => (int) $s->id, 'nome' => $s->descricao])->values();
+        @endphp
+        <script>
+            // Editor de composição + distribuição do combo mensal (Fase 5).
+            const SERVICOS_COMUNS = @json($servicosComunsJs);
+            // prefix: 'add' | 'edt'. dadosIniciais: {composicao:{id:preco}, distribuicao:[[ids],...]} ou null.
+            function initComboEditor(prefix, dadosIniciais) {
+                const compBox = document.getElementById(prefix + '-composicao');
+                const distBox = document.getElementById(prefix + '-distribuicao');
+                const outTotal = document.getElementById(prefix + '-total');
+                const inComp = document.getElementById(prefix + '_composicao');
+                const inDist = document.getElementById(prefix + '_distribuicao');
+                if (!compBox) return;
+                const ini = dadosIniciais || { composicao: {}, distribuicao: [[],[],[],[]] };
+
+                compBox.innerHTML = SERVICOS_COMUNS.map(s =>
+                    '<div class="d-flex align-items-center justify-content-between mb-1"><span>' + s.nome + '</span>' +
+                    '<div class="input-group input-group-sm" style="width:150px"><span class="input-group-text">R$</span>' +
+                    '<input type="number" step="0.01" min="0" class="form-control comp-preco" data-svc="' + s.id + '" value="' + (ini.composicao[s.id] ?? '') + '" placeholder="0,00"></div></div>'
+                ).join('');
+
+                const precosPreenchidos = () => {
+                    const obj = {};
+                    compBox.querySelectorAll('.comp-preco').forEach(el => {
+                        const v = parseFloat(el.value);
+                        if (el.value !== '' && !isNaN(v) && v > 0) obj[el.dataset.svc] = v;
+                    });
+                    return obj;
+                };
+
+                function renderDistribuicao() {
+                    const precos = precosPreenchidos();
+                    const svcs = Object.keys(precos);
+                    distBox.innerHTML = [1,2,3,4].map((n, i) => {
+                        const marcados = new Set((ini.distribuicao[i] || []).map(x => String(x)));
+                        const checks = svcs.length ? svcs.map(sid => {
+                            const nome = (SERVICOS_COMUNS.find(s => String(s.id) === String(sid)) || {}).nome || sid;
+                            return '<div class="form-check form-check-inline mb-0">' +
+                                '<input class="form-check-input dist-chk" type="checkbox" value="' + sid + '" data-sem="' + i + '" ' + (marcados.has(String(sid)) ? 'checked' : '') + ' id="' + prefix + '_d' + i + '_' + sid + '">' +
+                                '<label class="form-check-label" for="' + prefix + '_d' + i + '_' + sid + '">' + nome + '</label></div>';
+                        }).join('') : '<span class="text-muted small">Preencha um preço acima.</span>';
+                        return '<div class="d-flex flex-wrap align-items-center gap-2 mb-1"><span class="badge text-bg-secondary" style="min-width:60px">Visita ' + n + '</span> ' + checks + '</div>';
+                    }).join('');
+                    distBox.querySelectorAll('.dist-chk').forEach(el => el.addEventListener('change', atualizar));
+                }
+
+                function atualizar() {
+                    const precos = precosPreenchidos();
+                    inComp.value = JSON.stringify(precos);
+                    const dist = [[],[],[],[]];
+                    distBox.querySelectorAll('.dist-chk:checked').forEach(el => { dist[Number(el.dataset.sem)].push(Number(el.value)); });
+                    inDist.value = JSON.stringify(dist);
+                    let total = 0;
+                    dist.forEach(v => v.forEach(sid => { total += precos[sid] || 0; }));
+                    outTotal.textContent = 'R$ ' + total.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                }
+
+                compBox.querySelectorAll('.comp-preco').forEach(el => el.addEventListener('input', () => { renderDistribuicao(); atualizar(); }));
+                renderDistribuicao();
+                atualizar();
+            }
+
+            (function () {
+                const addChk = document.getElementById('servico_recorrente');
+                const addEditor = document.getElementById('add-combo-editor');
+                const addValor = document.getElementById('wrap_valor_add');
+                if (addChk && addEditor) {
+                    addChk.addEventListener('change', () => {
+                        addEditor.style.display = addChk.checked ? '' : 'none';
+                        if (addValor) addValor.style.display = addChk.checked ? 'none' : '';
+                        if (addChk.checked && !addEditor.dataset.inited) { initComboEditor('add', null); addEditor.dataset.inited = '1'; }
+                    });
+                }
+                const edtChk = document.getElementById('recorrente_edt_servico');
+                const edtEditor = document.getElementById('edt-combo-editor');
+                const edtValor = document.getElementById('wrap_valor_edt');
+                if (edtChk && edtEditor) {
+                    edtChk.addEventListener('change', () => {
+                        edtEditor.style.display = edtChk.checked ? '' : 'none';
+                        if (edtValor) edtValor.style.display = edtChk.checked ? 'none' : '';
+                        if (edtChk.checked && !edtEditor.dataset.inited) { initComboEditor('edt', null); edtEditor.dataset.inited = '1'; }
+                    });
+                }
+            })();
+        </script>
 
         {{-- Modal Excluir Serviços --}}
         <x-app.modal id="modal-exc-servico" title="Excluir Serviço" :btn="[['lbl' => 'Excluir', 'color' => 'danger', 'onclick' => '$(\'#form-excluir-servico\').submit()']]">
@@ -270,11 +408,13 @@
         @if(auth()->user()->adm)
         {{-- Serviços --}}
         <div class="card shadow my-3">
-            <div class="card-header"
+            <div class="card-header d-flex align-items-center"
                 data-bs-toggle="collapse"
                 data-bs-target="#collapseServicos"
+                aria-expanded="false"
                 style="cursor: pointer">
-                Serviços
+                <span>Serviços</span>
+                <span class="card-seta">▾</span>
             </div>
             <div id="collapseServicos" class="collapse">
                 <div class="card-body p-3 row">
@@ -289,6 +429,7 @@
                                     <th scope="col">Serviço</th>
                                     <th scope="col">Duração</th>
                                     <th scope="col">Valor</th>
+                                    <th scope="col">Repasse</th>
                                     <th scope="col">Status</th>
                                 </tr>
                             </thead>
@@ -300,10 +441,17 @@
                                             <svg style="cursor: pointer" onclick="editarServico('{{$servico->id}}')" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
                                         </td>
                                         <td>{{ $servico->descricao }}
-                                            @if($servico->recorrente)<span class="badge bg-secondary ms-1">Mensal</span>@endif
+                                            @if($servico->recorrente)
+                                                <span class="badge bg-secondary ms-1">Mensal</span>
+                                                <span class="badge ms-1 {{ $servico->visivel_cliente ? 'bg-success' : 'bg-warning text-dark' }}"
+                                                      title="{{ $servico->visivel_cliente ? 'Aparece no painel dos clientes (valores e itens)' : 'Oculto dos clientes — marque "Mostrar aos clientes" no editor' }}">
+                                                    {{ $servico->visivel_cliente ? '👁 visível p/ cliente' : '🚫 oculto' }}
+                                                </span>
+                                            @endif
                                         </td>
                                         <td>{{ $servico->duracao }}</td>
                                         <td>{{ $servico->valor ? 'R$ ' . number_format($servico->valor, 2, ',', '.') : '—' }}</td>
+                                        <td>{{ $servico->repasse_percent !== null ? rtrim(rtrim(number_format($servico->repasse_percent, 2, ',', '.'), '0'), ',') . '%' : '—' }}</td>
                                         <td class="text-{{ $servico->status == 0 ? 'danger' : 'success' }}">{{ $servico->status == 0 ? 'INATIVO' : 'ATIVO' }}</td>
                                     </tr>
                                 @endforeach
@@ -327,8 +475,8 @@
                         <input type="hidden" id="mgm-data-atual">
                         {{-- Ações rápidas --}}
                         <div class="d-flex flex-wrap gap-2 mb-3">
-                            <input type="time" id="mgm-comercial-inicio" class="form-control form-control-sm" style="width:auto" value="{{ \App\Models\PageContent::get('agenda','comercial_inicio','08:00') }}" title="Início do horário comercial">
-                            <input type="time" id="mgm-comercial-fim" class="form-control form-control-sm" style="width:auto" value="{{ \App\Models\PageContent::get('agenda','comercial_fim','17:45') }}" title="Fim do horário comercial">
+                            <input type="time" step="900" id="mgm-comercial-inicio" class="form-control form-control-sm" style="width:auto" value="{{ \App\Models\PageContent::get('agenda','comercial_inicio','08:00') }}" title="Início do horário comercial">
+                            <input type="time" step="900" id="mgm-comercial-fim" class="form-control form-control-sm" style="width:auto" value="{{ \App\Models\PageContent::get('agenda','comercial_fim','17:45') }}" title="Fim do horário comercial">
                             <button class="btn btn-sm btn-outline-success" onclick="mgmPreset('comercial')">Horário comercial</button>
                             <button class="btn btn-sm btn-outline-primary" onclick="mgmPreset('tudo')">Selecionar tudo</button>
                             <button class="btn btn-sm btn-outline-secondary" onclick="mgmPreset('limpar')">Limpar tudo</button>
@@ -356,7 +504,7 @@
                         <input type="hidden" id="mgm-barbeiro" value="{{ auth()->user()->id }}">
                         <strong>{{ auth()->user()->name }}</strong>
                     @else
-                        <select id="mgm-barbeiro" class="form-select form-select-sm" style="width:auto" onchange="mgmCarregarMes()">
+                        <select id="mgm-barbeiro" class="form-select form-select-sm" style="width:auto" onchange="mgmAtualizarJanela(); mgmCarregarMes()">
                             @foreach($barbeiros as $b)
                                 <option value="{{ $b->id }}" @selected((string) $barbeiroSelecionado === (string) $b->id)>{{ $b->name }}</option>
                             @endforeach
@@ -376,6 +524,13 @@
                         <span id="mgm-cal-today" class="btn btn-sm btn-primary">Hoje</span>
                     </div>
                     <div id="mgm-week-btns-top" class="d-flex flex-wrap gap-2 mb-2 justify-content-center"></div>
+                    {{-- Janela de horário POR BARBEIRO (cada um define a sua; usada ao liberar a semana) --}}
+                    <div id="mgm-janela-barbeiro" class="d-flex flex-wrap align-items-center gap-2 justify-content-center mb-2">
+                        <span class="text-muted small">Horário deste barbeiro:</span>
+                        <input type="time" step="900" id="mgm-janela-inicio" class="form-control form-control-sm" style="width:auto" title="Início da janela do barbeiro selecionado">                        <span class="text-muted small">até</span>
+                        <input type="time" step="900" id="mgm-janela-fim" class="form-control form-control-sm" style="width:auto" title="Fim da janela do barbeiro selecionado">
+                        <button class="btn btn-sm btn-success" type="button" onclick="mgmSalvarJanela()">Salvar horário</button>
+                    </div>
                     <div class="cal-semana">
                         <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div>
                         <div>Qui</div><div>Sex</div><div>Sab</div>
@@ -387,6 +542,7 @@
                 <div class="d-flex gap-3 mt-3 justify-content-center flex-wrap">
                     <span><span style="display:inline-block;width:14px;height:14px;background:#16a34a;border-radius:3px;vertical-align:middle"></span> Com horários</span>
                     <span><span style="display:inline-block;width:14px;height:14px;background:#dc2626;border-radius:3px;vertical-align:middle"></span> Sem horários</span>
+                    <span><span style="display:inline-block;width:14px;height:14px;background:#fff3cd;border:1px solid #f0ad4e;border-radius:3px;vertical-align:middle"></span> Fixo não liberado</span>
                     <span><span style="display:inline-block;width:14px;height:14px;background:#f1f1f1;opacity:.4;border-radius:3px;vertical-align:middle"></span> Passado</span>
                 </div>
             </div>
@@ -395,11 +551,15 @@
         {{-- Avisos --}}
         <div class="card shadow my-3">
             <div class="card-header d-flex justify-content-between align-items-center"
-                 data-bs-toggle="collapse" data-bs-target="#collapseAvisos" style="cursor:pointer">
+                 data-bs-toggle="collapse" data-bs-target="#collapseAvisos"
+                 aria-expanded="{{ $avisos->isNotEmpty() ? 'true' : 'false' }}" style="cursor:pointer">
                 <span>Avisos</span>
-                @if($avisos->isNotEmpty())
-                    <span class="badge bg-warning text-dark">{{ $avisos->count() }}</span>
-                @endif
+                <span class="d-flex align-items-center gap-2">
+                    @if($avisos->isNotEmpty())
+                        <span class="badge bg-warning text-dark">{{ $avisos->count() }}</span>
+                    @endif
+                    <span class="card-seta">▾</span>
+                </span>
             </div>
             <div id="collapseAvisos" class="collapse {{ $avisos->isNotEmpty() ? 'show' : '' }}">
                 <div class="card-body p-3" id="avisos-lista">
@@ -440,30 +600,66 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Planos mensais (horários fixos)</span>
                 @if(auth()->user()->adm || auth()->user()->func)
-                <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#modal-add-plano" style="background-color: var(--marrom); color:#1a1410">Novo plano</button>
+                <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#modal-add-plano" style="background-color: var(--marrom); color:#1a1410">Vincular plano</button>
                 @endif
             </div>
             <div class="card-body p-0">
                 <table class="table table-sm mb-0 align-middle">
-                    <thead><tr><th>Cliente</th><th>Serviço</th><th>Barbeiro</th><th>Slot fixo</th><th>Mês</th><th>Unidades</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Cliente</th><th>Itens inclusos</th><th>Barbeiro</th><th>Slot fixo</th><th>Ciclo</th><th>Visitas</th><th>Status</th></tr></thead>
                     <tbody>
+                        @php $assinaturasComBotao = []; @endphp
                         @forelse($planos as $pl)
                         <tr>
                             <td>{{ $pl->user->name ?? '—' }}</td>
                             <td>
-                                {{ $pl->servico->descricao ?? '—' }}
+                                {{ $pl->descricaoItens() }}
                                 @if($pl->recorrente) <span class="badge text-bg-info" title="Renovação automática mensal (link)">🔁 Recorrente</span>@endif
                             </td>
                             <td>{{ $pl->funcionario->name ?? '—' }}</td>
                             <td>{{ ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][$pl->dia_semana] ?? '' }} {{ \Carbon\Carbon::parse($pl->hora)->format('H:i') }}</td>
-                            <td>{{ \Carbon\Carbon::parse($pl->mes)->format('m/Y') }}</td>
-                            <td>{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }}</td>
                             <td>
+                                @if($pl->data_inicio && $pl->data_fim)
+                                    {{ \Carbon\Carbon::parse($pl->data_inicio)->format('d/m') }} → {{ \Carbon\Carbon::parse($pl->data_fim)->format('d/m/Y') }}
+                                @else
+                                    {{ \Carbon\Carbon::parse($pl->mes)->format('m/Y') }}
+                                @endif
+                            </td>
+                            <td>
+                                <div>{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }}</div>
+                                @if($pl->itens->isNotEmpty())
+                                    <div class="small text-muted">{{ $pl->restantesPorServico() }}</div>
+                                @endif
+                            </td>
+                            <td>
+                                @if(auth()->user()->adm && in_array($pl->status, ['ativo', 'aguardando_pagamento']))
+                                    <button type="button" class="btn btn-sm btn-link text-secondary p-0 lh-1 align-baseline me-1 btn-edit-plano" data-plano="{{ $pl->id }}" title="Editar quantidades e valor com desconto">Editar</button>
+                                @endif
+                                @if((auth()->user()->adm || auth()->user()->func) && $pl->status === 'aguardando_pagamento')
+                                    <form method="POST" action="{{ route('planos.ativar', $pl) }}" class="d-inline me-1"
+                                          onsubmit="return confirm('Ativar este plano agora? Use para pagamento PRESENCIAL (dinheiro/cartão na hora).')">
+                                        @csrf
+                                        <button type="submit" class="btn btn-sm btn-link text-success p-0 lh-1 align-baseline" title="Ativar — pagamento presencial">Ativar (pago no local)</button>
+                                    </form>
+                                @endif
                                 @if($pl->status === 'ativo') <span class="badge bg-success">Ativo</span>
                                 @elseif($pl->status === 'aguardando_pagamento') <span class="badge bg-warning text-dark">Aguardando pgto</span>
                                 @elseif($pl->status === 'consumido') <span class="badge bg-secondary">Consumido</span>
                                 @elseif($pl->status === 'expirado') <span class="badge bg-danger">{{ $pl->restantes() }} a negociar</span>
                                 @else <span class="badge bg-secondary">{{ $pl->status }}</span>
+                                @endif
+                                @if(auth()->user()->adm || auth()->user()->func)
+                                    @php $aid = $pl->assinatura->id ?? null; @endphp
+                                    @if($aid && $pl->assinatura->status === 'ativo' && !in_array($aid, $assinaturasComBotao) && in_array($pl->status, ['ativo', 'aguardando_pagamento']))
+                                        @php $assinaturasComBotao[] = $aid; @endphp
+                                        <form method="POST" action="{{ route('assinaturas.cancelar', $pl->assinatura) }}" class="d-inline-block ms-2"
+                                              onsubmit="return confirm('Cancelar este plano? As renovações automáticas param. O ciclo já pago segue valendo até o fim.')">
+                                            @csrf
+                                            <button type="submit" class="btn btn-sm btn-link text-danger p-0 lh-1 align-baseline" title="Interrompe as renovações automáticas">Cancelar plano</button>
+                                        </form>
+                                    @elseif($aid && $pl->assinatura->status === 'cancelado' && !in_array($aid, $assinaturasComBotao))
+                                        @php $assinaturasComBotao[] = $aid; @endphp
+                                        <span class="badge text-bg-secondary ms-1" title="Assinatura cancelada — sem renovações">Cancelada</span>
+                                    @endif
                                 @endif
                             </td>
                         </tr>
@@ -511,12 +707,12 @@
             });
             $(document).on('click', '.btn-rec-pendente', function () {
                 const id = $(this).data('id');
-                if (!confirm('Recusar este agendamento? O cliente será avisado e o reembolso será processado.')) return;
+                if (!confirm('Recusar este agendamento? O cliente será avisado e, se pagou online, ganhará 1 crédito do serviço para remarcar.')) return;
                 axios.post(`{{ url('/') }}/agenda/${id}/recusar`)
                     .then(res => {
-                        const modo = res.data.reembolso === 'automatico'
-                            ? 'Reembolso automático solicitado.'
-                            : 'Reembolso PENDENTE: estorne manualmente no painel da InfinitePay.';
+                        const modo = res.data.credito
+                            ? 'O cliente ganhou 1 unidade de crédito do serviço (sem validade). Devolução do valor, se pedida, é combinada direto no WhatsApp.'
+                            : 'O cliente foi avisado para reagendar.';
                         alert('Recusado. ' + modo);
                         $(`tr[data-pendente="${id}"]`).fadeOut(250, function(){ $(this).remove(); });
                     })
@@ -570,71 +766,32 @@
         </script>
         @endif
 
-        @if(auth()->user()->adm)
-        {{-- Modal: Nova ordem de pagamento (Mercado Pago) --}}
-        <x-app.modal id="modal-add-ordem" title="Nova ordem de pagamento" :btn="[['lbl' => 'Criar ordem', 'color' => 'primary', 'onclick' => '$(\'#form-add-ordem\').submit()']]">
-            <form method="POST" id="form-add-ordem" action="{{ route('ordens.store') }}" novalidate>
-                @csrf
-                @method('post')
-                <div class="mb-3">
-                    <label for="ordem_user_id" class="form-label">Cliente</label>
-                    <select name="user_id" id="ordem_user_id" class="form-select {{ $errors->has('user_id') ? 'is-invalid' : '' }}" required>
-                        <option value="">Selecione...</option>
-                        @foreach ($clientes as $cliente)
-                            <option value="{{ $cliente->id }}" @selected(old('user_id') == $cliente->id)>{{ $cliente->name }}</option>
-                        @endforeach
-                    </select>
-                    @error('user_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
-                <x-app.input label="Descrição" type="text" name="descricao" id="ordem_descricao" required="true">
-                    Ex.: Pacote 5 cortes
-                </x-app.input>
-                <div class="mb-3">
-                    <label for="ordem_valor" class="form-label">Valor (R$)</label>
-                    <input type="number" step="0.01" min="0.01" name="valor" id="ordem_valor"
-                           data-taxa="{{ config('services.infinitepay.taxa_credito') }}"
-                           class="form-control {{ $errors->has('valor') ? 'is-invalid' : '' }}"
-                           value="{{ old('valor') }}" placeholder="3500.00" required>
-                    @error('valor')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    {{-- Estimativa do valor líquido após taxas da InfinitePay. Só informativo
-                         — a API de Link não devolve o líquido real; o valor cobrado do cliente
-                         é o integral. Taxa de exemplo — ajuste INFINITEPAY_TAXA_CREDITO ao real. --}}
-                    <div id="ordem_liquido" class="form-text" style="display:none;">
-                        <span class="text-muted">Taxa InfinitePay (~{{ number_format(config('services.infinitepay.taxa_credito'), 2, ',', '.') }}%):</span>
-                        <span id="ordem_liquido_taxa" class="text-danger fw-semibold">-R$ 0,00</span>
-                        <span class="mx-1 text-muted">•</span>
-                        <span class="text-muted">Você recebe:</span>
-                        <span id="ordem_liquido_valor" class="text-success fw-semibold">R$ 0,00</span>
-                    </div>
-                </div>
-                <div class="form-text">@if((int) (\App\Models\OrdemPagamento::MAX_PARCELAS) > 1) O cliente poderá pagar em até <strong>{{ \App\Models\OrdemPagamento::MAX_PARCELAS }}x</strong>. @else Pagamento à vista — cartão (crédito/débito) ou Pix. Sem parcelamento. @endif</div>
-            </form>
-        </x-app.modal>
 
-        {{-- Modal: Novo plano mensal (horário fixo semanal) --}}
-        <x-app.modal id="modal-add-plano" title="Novo plano mensal" :btn="[['lbl' => 'Criar plano', 'color' => 'primary', 'onclick' => '$(\'#form-add-plano\').submit()']]">
+        @if(auth()->user()->adm || auth()->user()->func)
+        {{-- Modal: Vincular plano mensal a um cliente --}}
+        <x-app.modal id="modal-add-plano" title="Vincular plano mensal" :btn="[['lbl' => 'Vincular', 'color' => 'primary', 'onclick' => '$(\'#form-add-plano\').submit()']]">
             <form method="POST" id="form-add-plano" action="{{ route('planos.store') }}" novalidate>
                 @csrf
                 @method('post')
                 <div class="mb-3">
-                    <label for="plano_user_id" class="form-label">Cliente</label>
-                    <select name="user_id" id="plano_user_id" class="form-select {{ $errors->has('user_id') ? 'is-invalid' : '' }}" required>
-                        <option value="">Selecione...</option>
-                        @foreach ($clientes as $cliente)
-                            <option value="{{ $cliente->id }}" @selected(old('user_id') == $cliente->id)>{{ $cliente->name }}</option>
-                        @endforeach
-                    </select>
-                    @error('user_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    <label for="plano_cliente_busca" class="form-label">Cliente</label>
+                    <input type="text" id="plano_cliente_busca" class="form-control {{ $errors->has('user_id') ? 'is-invalid' : '' }}" placeholder="Digite o nome do cliente..." autocomplete="off" value="{{ old('user_id') ? \App\Models\User::find(old('user_id'))?->name : '' }}">
+                    <input type="hidden" name="user_id" id="plano_user_id" value="{{ old('user_id') }}" required>
+                    <div id="plano_cliente_resultados" class="list-group position-relative" style="max-height:200px;overflow:auto;z-index:5"></div>
+                    @error('user_id')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                 </div>
+                @if ($errors->any())
+                    <div class="alert alert-danger py-2 mb-3">{{ implode(' · ', $errors->all()) }}</div>
+                @endif
                 <div class="mb-3">
-                    <label for="plano_servico_id" class="form-label">Serviço mensal</label>
-                    <select name="servico_id" id="plano_servico_id" class="form-select {{ $errors->has('servico_id') ? 'is-invalid' : '' }}" required>
+                    <label for="plano_servico_base_id" class="form-label">Combo (serviço mensal) — define nome e duração do slot</label>
+                    <select name="servico_base_id" id="plano_servico_base_id" class="form-select {{ $errors->has('servico_base_id') ? 'is-invalid' : '' }}" required>
                         <option value="">Selecione...</option>
                         @foreach ($servicos->where('recorrente', 1) as $s)
-                            <option value="{{ $s->id }}" @selected(old('servico_id') == $s->id)>{{ $s->descricao }} — R$ {{ number_format($s->valor, 2, ',', '.') }}</option>
+                            <option value="{{ $s->id }}" @selected(old('servico_base_id') == $s->id)>{{ $s->descricao }}</option>
                         @endforeach
                     </select>
-                    @error('servico_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    @error('servico_base_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
                 </div>
                 <div class="mb-3">
                     <label for="plano_funcionario_id" class="form-label">Barbeiro</label>
@@ -659,123 +816,159 @@
                     </div>
                     <div class="col-md-3">
                         <label for="plano_hora" class="form-label">Horário</label>
-                        <input type="time" name="hora" id="plano_hora" class="form-control {{ $errors->has('hora') ? 'is-invalid' : '' }}" value="{{ old('hora') }}" required>
+                        <input type="time" name="hora" id="plano_hora" step="900" class="form-control {{ $errors->has('hora') ? 'is-invalid' : '' }}" value="{{ old('hora') }}" required>
                         @error('hora')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
-                    <div class="col-md-4">
-                        <label for="plano_mes" class="form-label">Mês</label>
-                        <input type="month" name="mes" id="plano_mes" class="form-control {{ $errors->has('mes') ? 'is-invalid' : '' }}" value="{{ old('mes') ?? now()->copy()->startOfMonth()->addMonth()->format('Y-m') }}" required>
-                        @error('mes')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
                 </div>
-                <div class="form-text mt-2">
-                    Valor total: <strong id="plano_valor_total">—</strong>
-                    <span id="plano_unidades" class="text-muted"></span>
+                <div class="form-text mt-1 small">O pacote começa no mês atual (semana atual em diante). Se vier no meio do mês, o valor é proporcional às semanas restantes.</div>
+                <div class="mb-2">
+                    <label for="plano_dia_renovacao" class="form-label">Melhor dia para pagar a renovação <span class="text-muted small">(todo mês; só a equipe altera)</span></label>
+                    <select name="dia_renovacao" id="plano_dia_renovacao" class="form-select" required>
+                        <option value="">Escolha o dia...</option>
+                        @for($d = 1; $d <= 31; $d++)
+                            <option value="{{ $d }}" @selected((string) old('dia_renovacao') === (string) $d)>Dia {{ $d }}</option>
+                        @endfor
+                    </select>
+                </div>
+                <div id="plano_combo_preview" class="mt-3 border rounded p-2" style="display:none">
+                    <div class="form-text fw-semibold">Composição do pacote (herdada do combo)</div>
+                    <div id="plano_combo_itens" class="small"></div>
+                    <div class="form-text mt-2">Valor do pacote (4 visitas): <strong id="plano_valor_total">—</strong></div>
+                    <div class="form-text">Em meses de 5 semanas, a 5ª visita é automática (repete a 1ª).</div>
+                </div>
+                <div id="plano_combo_alert" class="alert alert-warning py-2 mt-3 small" style="display:none">
+                    Este combo ainda não tem composição cadastrada. Edite o serviço mensal para definir serviços inclusos, preços com desconto e distribuição.
                 </div>
                 <div class="form-check mt-3">
-                    <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="plano_recorrente" {{ old('recorrente') ? 'checked' : '' }}>
-                    <label class="form-check-label" for="plano_recorrente">
-                        Recorrente — o sistema <strong>renova sozinho</strong> a cada mês: gera a cobrança do próximo mês (link) e avisa o cliente pagar. Não é cartão salvo.
+                    <input class="form-check-input" type="checkbox" value="1" name="consumir_no_ato" id="plano_consumir" {{ old('consumir_no_ato') ? 'checked' : '' }}>
+                    <label class="form-check-label" for="plano_consumir">
+                        Consumir 1 unidade agora (o cliente já usou um serviço no ato da criação).
                     </label>
+                </div>
+                <div class="form-text mt-2 small">O plano renova automaticamente todo mês no dia de pagamento (gera a cobrança e avisa o cliente).</div>
+            </form>
+        </x-app.modal>
+        <script>
+            // Preview do combo master ao escolher no "Novo plano mensal" (Fase 5).
+            (function () {
+                const base = document.getElementById('plano_servico_base_id');
+                const preview = document.getElementById('plano_combo_preview');
+                const alerta  = document.getElementById('plano_combo_alert');
+                const itens   = document.getElementById('plano_combo_itens');
+                const outV    = document.getElementById('plano_valor_total');
+                if (!base) return;
+
+                async function carregar() {
+                    preview.style.display = 'none';
+                    alerta.style.display = 'none';
+                    if (!base.value) return;
+                    try {
+                        const d = (await axios.get('/api/servico/' + base.value + '/composicao')).data;
+                        if (!d.tem_composicao) { alerta.style.display = ''; return; }
+                        const nomes = {};
+                        d.servicos.forEach(s => nomes[s.id] = s.descricao);
+                        const comps = Object.entries(d.composicao).map(([sid, p]) =>
+                            '<div>' + (nomes[sid] || ('serviço ' + sid)) + ': <strong>R$ ' + Number(p).toLocaleString('pt-BR', {minimumFractionDigits: 2}) + '</strong></div>'
+                        ).join('');
+                        itens.innerHTML = comps + '<div class="text-muted">Visitas: ' + d.distribuicao.map(v => v.length + ' svc').join(' · ') + '</div>';
+                        outV.textContent = 'R$ ' + Number(d.total_base).toLocaleString('pt-BR', {minimumFractionDigits: 2});
+                        preview.style.display = '';
+                    } catch (e) { alerta.style.display = ''; }
+                }
+                base.addEventListener('change', carregar);
+                carregar();
+            })();
+        </script>
+        <script>
+            // Autocomplete de cliente (axios) no "Novo plano mensal".
+            (function () {
+                const inp = document.getElementById('plano_cliente_busca');
+                const hidden = document.getElementById('plano_user_id');
+                const box = document.getElementById('plano_cliente_resultados');
+                if (!inp || !hidden || !box) return;
+                let t = null;
+                inp.addEventListener('input', function () {
+                    hidden.value = '';
+                    const q = inp.value.trim();
+                    if (q.length < 2) { box.innerHTML = ''; return; }
+                    clearTimeout(t);
+                    t = setTimeout(function () {
+                        axios.get('/api/clientes/busca', { params: { q: q } }).then(function (r) {
+                            box.innerHTML = r.data.map(function (c) {
+                                const nome = String(c.name).replace(/"/g, '');
+                                const wa = c.whatsapp ? ' <small class="text-muted">' + c.whatsapp + '</small>' : '';
+                                return '<button type="button" class="list-group-item list-group-item-action py-1" data-id="' + c.id + '" data-nome="' + nome + '">' + nome + wa + '</button>';
+                            }).join('');
+                        }).catch(function () { box.innerHTML = ''; });
+                    }, 250);
+                });
+                box.addEventListener('click', function (e) {
+                    const b = e.target.closest('button[data-id]');
+                    if (!b) return;
+                    hidden.value = b.dataset.id;
+                    inp.value = b.dataset.nome;
+                    box.innerHTML = '';
+                });
+            })();
+        </script>
+
+        @if(auth()->user()->adm)
+        {{-- Modal: Editar plano mensal (quantidades + valor unitário com desconto) --}}
+        <x-app.modal id="modal-edit-plano" title="Editar plano mensal" :btn="[['lbl' => 'Salvar', 'color' => 'primary', 'onclick' => '$(\'#form-edit-plano\').submit()']]">
+            <form method="POST" id="form-edit-plano" action="" novalidate>
+                @csrf
+                @method('PUT')
+                <div id="edit-plano-itens" class="mb-3"></div>
+                <div class="row g-2">
+                    <div class="col">
+                        <label class="form-label small mb-1">Dia de pagamento (renovação)</label>
+                        <select name="dia_renovacao" id="edit_dia_renovacao" class="form-select form-select-sm" required></select>
+                    </div>
+                    <div class="col form-text small align-self-end">5ª visita automática (repete a 1ª em meses de 5 semanas)</div>
                 </div>
             </form>
         </x-app.modal>
         <script>
-            // Cálculo do valor total do plano mensal (unidades × valor do serviço) via API.
             (function () {
-                const servico = document.getElementById('plano_servico_id');
-                const dia     = document.getElementById('plano_dia_semana');
-                const mes     = document.getElementById('plano_mes');
-                const outV    = document.getElementById('plano_valor_total');
-                const outU    = document.getElementById('plano_unidades');
-                async function recalc() {
-                    if (!servico || !servico.value || !dia || dia.value === '' || !mes || !mes.value) {
-                        if (outV) outV.textContent = '—';
-                        if (outU) outU.textContent = '';
-                        return;
-                    }
-                    try {
-                        const r = await fetch(`/api/mensal/calcular?servico_id=${servico.value}&dia_semana=${dia.value}&mes=${mes.value}`);
-                        const d = await r.json();
-                        if (d.error) { if (outV) outV.textContent = '—'; return; }
-                        if (outV) outV.textContent = 'R$ ' + Number(d.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-                        if (outU) outU.textContent = `(${d.unidades} cortes)`;
-                    } catch (e) { if (outV) outV.textContent = '—'; }
-                }
-                [servico, dia, mes].forEach(el => el && el.addEventListener('change', recalc));
-                recalc();
+                const modalEl = document.getElementById('modal-edit-plano');
+                if (!modalEl) return;
+                const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+                const form = document.getElementById('form-edit-plano');
+                const itensBox = document.getElementById('edit-plano-itens');
+                const diaSel = document.getElementById('edit_dia_renovacao');
+                // Popula select 1-31 uma vez.
+                diaSel.innerHTML = '';
+                for (let d = 1; d <= 31; d++) diaSel.innerHTML += '<option value="' + d + '">Dia ' + d + '</option>';
+
+                const baseUrl = '{{ route("planos.update", ["plano" => 0]) }}';
+
+                document.addEventListener('click', function (e) {
+                    const btn = e.target.closest('.btn-edit-plano');
+                    if (!btn) return;
+                    const id = btn.dataset.plano;
+                    axios.get('/planos-mensais/' + id + '/editar').then(function (r) {
+                        const d = r.data;
+                        form.action = baseUrl.replace('/0', '/' + id);
+
+                        itensBox.innerHTML = d.itens.map(function (it, idx) {
+                            return '<div class="d-flex align-items-center gap-2 mb-1">' +
+                                '<span class="flex-grow-1">' + it.descricao + '</span>' +
+                                '<input type="hidden" name="itens[' + idx + '][servico_id]" value="' + it.servico_id + '">' +
+                                '<input type="number" name="itens[' + idx + '][quantidade]" value="' + it.quantidade + '" min="0" class="form-control form-control-sm" style="width:80px" title="quantidade">' +
+                                '<div class="input-group input-group-sm" style="width:140px"><span class="input-group-text">R$</span>' +
+                                '<input type="number" step="0.01" name="itens[' + idx + '][valor_unitario]" value="' + it.valor_unitario + '" min="0" class="form-control" title="valor unitário c/ desconto"></div>' +
+                                '</div>';
+                        }).join('') + '<div class="form-text">Valor unitário <strong>com desconto</strong> — usado para precificar a unidade extra da 5ª semana.</div>';
+
+                        diaSel.value = d.dia_renovacao || '';
+                        modal.show();
+                    });
+                });
             })();
         </script>
-
-        {{-- Ordens de Pagamento (Mercado Pago) --}}
-        <div class="card shadow my-3">
-            <div class="card-header d-flex justify-content-between align-items-center"
-                 data-bs-toggle="collapse" data-bs-target="#collapseOrdens" style="cursor:pointer">
-                <span>Ordens de Pagamento</span>
-                <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#modal-add-ordem" style="background-color: var(--marrom)" onclick="event.stopPropagation();">Nova ordem</button>
-            </div>
-            <div id="collapseOrdens" class="collapse show">
-                <div class="card-body p-3">
-                    <div class="table-responsive">
-                        <table class="table table-striped table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Cliente</th>
-                                    <th>Descrição</th>
-                                    <th>Valor</th>
-                                    <th>Valor recebido</th>
-                                    <th>Parcelas</th>
-                                    <th>Status</th>
-                                    <th>Ação</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @forelse ($ordensPagamento as $ordem)
-                                    @php [$rotulo, $cls] = $ordem->statusBadge(); @endphp
-                                    <tr>
-                                        <td>{{ $ordem->user?->name }}</td>
-                                        <td>{{ $ordem->descricao }}</td>
-                                        <td>R$ {{ number_format($ordem->valor, 2, ',', '.') }}</td>
-                                        <td>
-                                            @if(in_array($ordem->status, ['approved', 'pending', 'aberta']))
-                                                @php $liq = $ordem->valorLiquido(); @endphp
-                                                @if($ordem->liquidoEstimado())
-                                                    <span title="Estimativa (taxa 6x) — o valor real será registrado no pagamento" style="cursor: help">~R$ {{ number_format($liq, 2, ',', '.') }}</span>
-                                                @else
-                                                    R$ {{ number_format($liq, 2, ',', '.') }}
-                                                @endif
-                                            @else
-                                                <span class="text-muted">&mdash;</span>
-                                            @endif
-                                        </td>
-                                        <td>@if($ordem->installments) {{ $ordem->installments }}x @elseif($ordem->max_parcelas > 1) até {{ $ordem->max_parcelas }}x @else À vista @endif</td>
-                                        <td><span class="badge {{ $cls }}">{{ $rotulo }}</span></td>
-                                        <td>
-                                            @if ($ordem->status === 'aberta')
-                                                <form method="POST" action="{{ route('ordens.cancelar', $ordem->id) }}" class="d-inline" onsubmit="return confirm('Cancelar esta ordem?')">
-                                                    @csrf
-                                                    <button class="btn btn-sm btn-outline-warning">Cancelar</button>
-                                                </form>
-                                            @endif
-                                            @if ($ordem->status !== 'approved')
-                                                <form method="POST" action="{{ route('ordens.destroy', $ordem->id) }}" class="d-inline" onsubmit="return confirm('Excluir DEFINITIVAMENTE esta ordem? Não poderá ser desfeito.')">
-                                                    @csrf
-                                                    @method('DELETE')
-                                                    <button class="btn btn-sm btn-outline-danger">Excluir</button>
-                                                </form>
-                                            @endif
-                                        </td>
-                                    </tr>
-                                @empty
-                                    <tr><td colspan="7" class="text-muted text-center">Nenhuma ordem criada.</td></tr>
-                                @endforelse
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
         @endif
+
+        @endif {{-- modal plano mensal + cálculo: adm ou func --}}
 
     @endif
 
@@ -820,11 +1013,13 @@
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="chk_especial">
                         <label class="form-check-label" for="chk_especial">Especial (encaixe)</label>
+                        <div class="form-text small">Use para encaixar um horário <strong>sobre outro agendamento</strong> já existente (atendimento simultâneo).</div>
                     </div>
                     {{-- Serviço comum: um item por PACOTE contratado (com saldo restante/total).
                          O select não é enviado; ele alimenta os campos ocultos servico_id e credito_id. --}}
                     <div id="servico-normal-wrap" class="mb-3">
                         <label for="servico_sel" class="form-label">Selecione o serviço</label>
+                        <div class="form-text small mb-1">Os serviços avulsos (pacotes) devem ser adicionados no <strong>cadastro do cliente</strong> (Editar Usuário).</div>
                         <select id="servico_sel" class="form-select {{ $errors->has('servico_id') ? 'is-invalid' : '' }}" required>
                             <option value="">Selecione o cliente primeiro</option>
                         </select>
@@ -950,20 +1145,17 @@
                     @foreach($pacotesMensais as $pm)
                         <div class="border rounded px-3 py-2 small">
                             <strong>{{ $pm->descricao }}</strong>
-                            <div class="text-muted">R$ {{ number_format($pm->valor, 2, ',', '.') }} / corte · horário fixo semanal</div>
+                            <div class="text-muted">
+                                @if($pm->temComposicao()){{ $pm->descricaoItens() }} · @endif
+                                R$ {{ number_format($pm->valor, 2, ',', '.') }} · horário fixo semanal
+                            </div>
                         </div>
                     @endforeach
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2">
-                    @if(auth()->user()->isIndicado())
-                        <span class="text-muted small">Você está liberado para comprar ou renovar seu plano mensal pelo site.</span>
-                        <a class="btn btn-sm ms-auto" style="background-color: var(--marrom); color:#1a1410"
-                           href="{{ route('agendar.index') }}">Comprar / renovar plano</a>
-                    @else
-                        <span class="text-muted small">Aquisição apenas presencialmente na barbearia.</span>
-                        <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
-                           href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero saber mais sobre o pacote mensal.') }}">Quero assinar</a>
-                    @endif
+                    <span class="text-muted small">O pacote mensal é adquirido presencialmente na barbearia ou pelo nosso WhatsApp.</span>
+                    <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
+                       href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero saber mais sobre o pacote mensal.') }}">Quero assinar</a>
                 </div>
             </div>
         </div>
@@ -1009,18 +1201,25 @@
                         $slot = ($diasSlot[$pl->dia_semana] ?? '') . ' ' . \Carbon\Carbon::parse($pl->hora)->format('H:i');
                     @endphp
                     <div class="border rounded px-2 py-1 mb-1 small">
-                        <strong>{{ $pl->servico->descricao ?? '—' }}</strong>
+                        <strong>{{ $pl->descricaoItens() }}</strong>
                         · {{ $pl->funcionario->name ?? '—' }} · {{ $slot }}
-                        <span class="badge bg-secondary">{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }} usadas</span>
+                        <span class="badge bg-secondary">{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }} visitas</span>
+                        @if($pl->itens->isNotEmpty())<span class="text-muted">· {{ $pl->restantesPorServico() }}</span>@endif
+                        @if($pl->temDistribuicao() && $pl->status === 'ativo' && $pl->proximaVisitaDesc())
+                            <div class="text-muted">Próxima visita: {{ $pl->proximaVisitaDesc() }}</div>
+                        @endif
                         @if($pl->status === 'ativo')
                             <span class="badge bg-success">Ativo</span>
                         @elseif($pl->status === 'aguardando_pagamento')
                             <span class="badge bg-warning text-dark">Aguardando pagamento</span>
                         @elseif($pl->status === 'consumido')
                             <span class="badge bg-secondary">Concluído</span>
+                            @if(!empty($pl->valores_extra))
+                                <span class="badge text-bg-warning text-dark">Pacote acabou — visita extra disponível pelo link no WhatsApp</span>
+                            @endif
                         @elseif($pl->status === 'expirado' && $pl->restantes() > 0)
                             <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
-                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu plano mensal (restam ' . $pl->restantes() . ' cortes).') }}">Negociar {{ $pl->restantes() }}</a>
+                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu plano mensal (restam ' . $pl->restantes() . ' visitas).') }}">Negociar {{ $pl->restantes() }}</a>
                         @endif
                     </div>
                 @endforeach
@@ -1209,7 +1408,7 @@
                                     <div id="dia-{{ $dataKey }}" class="collapse {{ $isHoje ? 'show' : '' }} pt-2">
                                         @foreach ($listaDia as $consulta)
                                             @php $isStaff = auth()->user()->adm == 1 || auth()->user()->func == 1; @endphp
-                                            <div class="consulta-card {{ !$consulta->confirmado ? 'consulta-pendente' : '' }} {{ $consulta->especial ? 'consulta-especial' : '' }} {{ $consulta->plano_mensal_id ? 'consulta-mensal' : '' }} d-flex {{ $isStaff ? 'justify-content-between align-items-center' : 'flex-column' }}" data-consulta-id="{{ $consulta->id }}">
+                                            <div class="consulta-card {{ !$consulta->confirmado ? 'consulta-pendente' : '' }} {{ $consulta->especial ? 'consulta-especial' : '' }} {{ $consulta->plano_mensal_id ? 'consulta-mensal' : '' }} {{ $consulta->status === 'reserva_renovacao' ? 'consulta-reserva' : '' }} d-flex {{ $isStaff ? 'justify-content-between align-items-center' : 'flex-column' }}" data-consulta-id="{{ $consulta->id }}">
                                                 <div class="d-flex flex-grow-1" @if($isStaff) onclick="editarConsulta({{ $consulta->id }})" style="cursor: pointer" @endif>
                                                     <div class="me-3 text-center">
                                                         <div class="consulta-hora">
@@ -1231,6 +1430,7 @@
                                                             <span class="badge bg-warning text-dark mb-1">Aguardando confirmação</span>
                                                         @endif
                                                         @if($consulta->plano_mensal_id)<span class="badge bg-primary mb-1 ms-1">📅 Mensal</span>@endif
+                                                        @if($consulta->status === 'reserva_renovacao')<span class="badge bg-danger mb-1 ms-1">⚠️ Sem saldo — renovar</span>@endif
                                                         <br>
                                                         <strong>Cliente:</strong> {{ $consulta->user->name }}
                                                         @if($consulta->funcionario)<br><strong>Barbeiro:</strong> {{ $consulta->funcionario->name }}@endif
@@ -1240,29 +1440,15 @@
                                                         @if($isStaff)
                                                             <div class="d-flex flex-column gap-1 mt-2">
                                                                 {!! $confirmaLinha(
-                                                                    $lembreteBadge($consulta->lembrete_24h, 'Véspera', $consulta->pre_confirmado_em ? 'bg-info text-dark' : 'bg-success'),
-                                                                    $consulta->pre_confirmado_em, 'Pré-confirmou em:', 'bg-info text-dark', $consulta->lembrete_24h) !!}
-                                                                {!! $confirmaLinha(
-                                                                    $lembreteBadge($consulta->lembrete_2h, '2h antes'),
-                                                                    $consulta->confirmado_em, 'Confirmou em:', 'bg-success', $consulta->lembrete_2h) !!}
+                                                                    $lembreteBadge($consulta->lembrete_24h, 'Véspera'),
+                                                                    $consulta->confirmado_em, 'Confirmou em:', 'bg-success', $consulta->lembrete_24h) !!}
                                                             </div>
                                                         @endif
                                                     </div>
                                                 </div>
                                                 @if($isStaff)
-                                                    @if(!$consulta->confirmado)
-                                                        <button class="btn btn-sm btn-success btn-confirmar ms-2"
-                                                                onclick="event.stopPropagation(); confirmarConsulta({{ $consulta->id }})">
-                                                            Confirmar
-                                                        </button>
-                                                        <button class="btn btn-sm btn-outline-primary btn-reenviar ms-2"
-                                                                title="Enviar pedido de confirmação agora no WhatsApp"
-                                                                onclick="event.stopPropagation(); reenviarLembrete({{ $consulta->id }}, this)">
-                                                            Enviar pedido de confirmação agora
-                                                        </button>
-                                                    @endif
                                                     {{-- Comparecimento (gera penalidade em no-show) --}}
-                                                    @if(is_null($consulta->compareceu))
+                                                    @if($consulta->status !== 'reserva_renovacao' && is_null($consulta->compareceu))
                                                         <button class="btn btn-sm btn-outline-success ms-2"
                                                                 onclick="event.stopPropagation(); marcarComparecimento({{ $consulta->id }}, true)">Compareceu</button>
                                                         <button class="btn btn-sm btn-outline-danger ms-2"
@@ -1333,7 +1519,6 @@
                 pre_confirmado_em: @json($c->pre_confirmado_em),
                 confirmado_em: @json($c->confirmado_em),
                 lembrete_24h: @json($c->lembrete_24h),
-                lembrete_2h: @json($c->lembrete_2h),
                 user: { name: @json($c->user->name) },
                 servico: { descricao: @json($c->servico->descricao ?? '') },
                 data_inicio: @json($c->data_inicio->format('Y-m-d H:i:s')),
@@ -1361,19 +1546,6 @@
         }
 
         // Liga/desliga "indicado" (compra de plano mensal pelo site) direto na tabela.
-        function toggleIndicacao(userId, btn) {
-            axios.post(`{{ url('/') }}/usuario/${userId}/indicar`)
-                .then(res => {
-                    const on = !!res.data.indicado;
-                    btn.textContent = on ? 'Sim' : 'Não';
-                    btn.classList.toggle('btn-success', on);
-                    btn.classList.toggle('btn-outline-secondary', !on);
-                    const u = users.find(x => x.id == userId);
-                    if (u) u.indicado = on ? 1 : 0;
-                })
-                .catch(() => alert('Erro ao alterar indicação.'));
-        }
-
         // ── Busca de cliente (nome ou WhatsApp) no modal de nova consulta ────
         (function () {
             const input  = document.getElementById('user_id_busca');
@@ -1395,10 +1567,10 @@
                 const q = input.value.trim();
                 if (q.length < 2) { box.classList.add('d-none'); return; }
                 timer = setTimeout(() => {
-                    axios.get('{{ url("/") }}/usuarios-search', { params: { q } })
+                    axios.get('{{ url("/") }}/usuarios-search', { params: { q, clientes: 1 } })
                         .then(res => {
-                            // só clientes (não adm/func)
-                            const lista = (res.data.data || []).filter(u => !u.adm && !u.func);
+                            // clientes=1 no backend já exclui adm/func
+                            const lista = res.data.data || [];
                             if (!lista.length) {
                                 box.innerHTML = '<div class="list-group-item small text-muted">Nenhum cliente encontrado.</div>';
                             } else {
@@ -1627,6 +1799,12 @@
             $('#excluir-usuario-id').val(id);
             $('#excluir-usuario-nome').text(nome);
             setTimeout(() => $('#modal-exc-usuario').modal('show'), 250);
+        }
+
+        function excluirUsuarioHard(id, nome) {
+            $('#excluir-usuario-hard-id').val(id);
+            $('#excluir-usuario-hard-nome').text(nome);
+            setTimeout(() => $('#modal-exc-usuario-hard').modal('show'), 250);
         }
 
         let users = @json($users->items());
@@ -1985,18 +2163,12 @@
                         <svg style="cursor:pointer" onclick="editarUsuario(${id})" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#0d6efd"><path d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>
                     </td>`;
 
-            const indicadoTd = (user) => {
-                if (user.adm > 0 || user.func > 0) return '<td>—</td>';
-                const on = !!user.indicado;
-                return `<td><button class="btn btn-sm ${on ? 'btn-success' : 'btn-outline-secondary'}" title="Liberar/bloquear compra de plano mensal pelo site" onclick="toggleIndicacao(${user.id}, this)">${on ? 'Sim' : 'Não'}</button></td>`;
-            };
-
             tbody.innerHTML = paginated.data.map(user => {
                 // Mesma proteção do blade: super admin (id=1) só é editável por id=1;
                 // colaborador (func) só é editável por admin.
                 let acoes;
                 if (user.id != 1 || AUTH_ID == 1) {
-                    acoes = (user.func != 1 || AUTH_ADM) ? celulaAcoes(user.id, user.name) : '<td>COLAB</td>';
+                    acoes = ((user.func != 1 || AUTH_ADM) && (!user.adm || AUTH_ID == 1)) ? celulaAcoes(user.id, user.name) : (user.adm ? '<td>ADM</td>' : '<td>COLAB</td>');
                 } else {
                     acoes = '<td>ADM</td>';
                 }
@@ -2006,7 +2178,6 @@
                     <td>${user.whatsapp ?? '—'}</td>
                     <td>${user.adm > 0 ? 'Sim' : 'Não'}</td>
                     <td>${user.func > 0 ? 'Sim' : 'Não'}</td>
-                    ${indicadoTd(user)}
                 </tr>`;
             }).join('');
 
@@ -2056,12 +2227,28 @@
             $('#descricao_edt_servico').val(servico.descricao);
             $('#duracao_h_edt_servico').val(servico.duracao.split(':')[0].padStart(2, '0'));
             $('#duracao_m_edt_servico').val(servico.duracao.split(':')[1].padStart(2, '0'));
+            $('#repasse_percent_edt_servico').val(servico.repasse_percent ?? '');
             $('#valor_edt_servico').val(servico.valor ?? '');
 
             $('[name="status_servico"]').prop('checked', false);
             $(`#status_servico_${servico.status}`).prop('checked', true);
 
             $('#recorrente_edt_servico').prop('checked', !!servico.recorrente);
+            $('#edt_mostrar_clientes').prop('checked', !!servico.recorrente && !!servico.visivel_cliente);
+
+            // Combo mensal: esconde o campo "valor" (calculado pela soma da composição).
+            const edtValorWrap = document.getElementById('wrap_valor_edt');
+            if (edtValorWrap) edtValorWrap.style.display = servico.recorrente ? 'none' : '';
+
+            // Editor de composição/distribuição do combo mensal (Fase 5). Mostra sempre
+            // que for mensal — mesmo sem composição ainda (p/ cadastrar a primeira vez).
+            const edtEditor = document.getElementById('edt-combo-editor');
+            if (servico.recorrente) {
+                edtEditor.style.display = '';
+                initComboEditor('edt', { composicao: servico.composicao || {}, distribuicao: servico.distribuicao || [[],[],[],[]] });
+            } else {
+                edtEditor.style.display = 'none';
+            }
 
             $('#modal-edt-servico').modal('show');
         }
@@ -2069,8 +2256,35 @@
         // ── Calendário de gestão de disponibilidade ──────────────────────────
         let mgmDataAtual       = new Date();
         let mgmDiasDisponiveis = [];
+        let mgmDiasFixos       = []; // dias não liberados mas com agendamento fixo (ex.: plano mensal)
 
         // Barbeiro cuja grade está sendo gerenciada (func → próprio; adm → selecionado).
+        // Janela de horário POR BARBEIRO (do servidor; null = usa o padrão global).
+        const mgmJanelas = @json($barbeiros->mapWithKeys(fn($b) => [$b->id => ['inicio' => $b->horario_inicio, 'fim' => $b->horario_fim]]));
+        const mgmJanelaPadrao = { inicio: @json(\App\Models\PageContent::get('agenda', 'comercial_inicio', '08:00')), fim: @json(\App\Models\PageContent::get('agenda', 'comercial_fim', '17:45')) };
+
+        function mgmAtualizarJanela() {
+            const fid = mgmFid();
+            const j = mgmJanelas[fid] || {};
+            const ini = document.getElementById('mgm-janela-inicio');
+            const fim = document.getElementById('mgm-janela-fim');
+            if (ini) ini.value = j.inicio || mgmJanelaPadrao.inicio;
+            if (fim) fim.value = j.fim || mgmJanelaPadrao.fim;
+        }
+
+        async function mgmSalvarJanela() {
+            const ini = (document.getElementById('mgm-janela-inicio') || {}).value;
+            const fim = (document.getElementById('mgm-janela-fim') || {}).value;
+            if (!ini || !fim) { alert('Defina o início e o fim do horário.'); return; }
+            try {
+                await axios.post('/api/agenda/horario-comercial', { inicio: ini, fim: fim, funcionario_id: mgmFid() });
+                mgmJanelas[mgmFid()] = { inicio: ini, fim: fim };
+                alert('Horário deste barbeiro salvo: ' + ini + ' às ' + fim + '.\nVale para as próximas semanas que você liberar.');
+            } catch (e) {
+                alert(e.response?.data?.error ?? 'Falha ao salvar o horário.');
+            }
+        }
+
         function mgmFid() {
             const sel = document.getElementById('mgm-barbeiro');
             return sel ? sel.value : '';
@@ -2088,10 +2302,15 @@
             const mes = mgmDataAtual.getMonth() + 1;
             sessionStorage.setItem(mgmCalStorageKey, `${ano}-${mgmDataAtual.getMonth()}`);
             try {
-                const res = await axios.get(`/api/dias-disponiveis/${ano}/${mes}?funcionario_id=${mgmFid()}`);
-                mgmDiasDisponiveis = res.data; // array de números de dia
+                const [resDisponiveis, resFixos] = await Promise.all([
+                    axios.get(`/api/dias-disponiveis/${ano}/${mes}?funcionario_id=${mgmFid()}`),
+                    axios.get(`/api/dias-fixos/${ano}/${mes}?funcionario_id=${mgmFid()}`),
+                ]);
+                mgmDiasDisponiveis = resDisponiveis.data; // array de números de dia
+                mgmDiasFixos       = resFixos.data;        // dias fixos não liberados
             } catch(e) {
                 mgmDiasDisponiveis = [];
+                mgmDiasFixos = [];
             }
             mgmGerarCalendario();
         }
@@ -2144,6 +2363,12 @@
                     div.classList.add('cal-disponivel');
                 } else {
                     div.classList.add('cal-bloqueado');
+                }
+
+                // Marca dias não liberados mas com agendamento fixo (ex.: plano mensal).
+                if (!passado && mgmDiasFixos.includes(d)) {
+                    div.classList.add('cal-fixos');
+                    div.title = 'Dia não liberado, mas há agendamento fixo (ex.: plano mensal). Abra a semana para incluir o slot.';
                 }
 
                 div.style.cursor = 'pointer';
@@ -2343,6 +2568,7 @@
         // Inicializar calendário de gestão ao carregar a página
         document.addEventListener('DOMContentLoaded', () => {
             mgmCarregarMes();
+            mgmAtualizarJanela();
 
             // Horário comercial: salva globalmente ao alterar os inputs (debounce 400ms).
             let comercialTimer = null;
@@ -2451,14 +2677,10 @@
                                         <strong>Cliente:</strong> ${nomePaciente.textContent}<br>
                                         <strong>Serviço:</strong> ${nomeServico.textContent}
                                         <div class="d-flex flex-column gap-1 mt-2">
-                                            ${confirmaLinha(lembreteBadge(c.lembrete_24h, 'Véspera', c.pre_confirmado_em ? 'bg-info text-dark' : 'bg-success'), c.pre_confirmado_em, 'Pré-confirmou em:', 'bg-info text-dark', c.lembrete_24h)}
-                                            ${confirmaLinha(lembreteBadge(c.lembrete_2h, '2h antes'), c.confirmado_em, 'Confirmou em:', 'bg-success', c.lembrete_2h)}
+                                            ${confirmaLinha(lembreteBadge(c.lembrete_24h, 'Véspera'), c.confirmado_em, 'Confirmou em:', 'bg-success', c.lembrete_24h)}
                                         </div>
                                     </div>
                                 </div>
-                                ${!c.confirmado
-                                    ? `<button class="btn btn-sm btn-success btn-confirmar ms-2" onclick="event.stopPropagation(); confirmarConsulta(${c.id})">Confirmar</button><button class="btn btn-sm btn-outline-primary btn-reenviar ms-2" title="Reenviar pedido de confirmação no WhatsApp" onclick="event.stopPropagation(); reenviarLembrete(${c.id}, this)">Reenviar pedido de confirmação</button>`
-                                    : ''}
                                 <button class="btn btn-sm btn-danger ms-2"
                                     onclick="event.stopPropagation(); excluirConsultaById(${c.id})">
                                     <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#ffffff"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
@@ -2475,35 +2697,6 @@
             });
         }
 
-        // ── Estimativa de valor líquido (taxa InfinitePay) no modal de ordem
-        (function () {
-            const input   = document.getElementById('ordem_valor');
-            const box     = document.getElementById('ordem_liquido');
-            const elTaxa  = document.getElementById('ordem_liquido_taxa');
-            const elValor = document.getElementById('ordem_liquido_valor');
-            if (!input || !box) return;
-
-            const taxa = parseFloat(input.dataset.taxa) || 0;
-
-            const fmtBRL = (n) => 'R$ ' + n.toLocaleString('pt-BR', {
-                minimumFractionDigits: 2, maximumFractionDigits: 2,
-            });
-
-            const recalcular = () => {
-                const valor = parseFloat(input.value);
-                if (!valor || valor <= 0 || !taxa) {
-                    box.style.display = 'none';
-                    return;
-                }
-                const desconto = valor * (taxa / 100);
-                elTaxa.textContent  = '-' + fmtBRL(desconto);
-                elValor.textContent = fmtBRL(valor - desconto);
-                box.style.display = 'block';
-            };
-
-            input.addEventListener('input', recalcular);
-            recalcular();
-        })();
     </script>
     @else
     <script>
@@ -2575,4 +2768,48 @@
         }
     </script>
     @endif
+
+    {{-- Cards recolhíveis: mantém abertos/fechados após reload via ?abrir=id1,id2 na URL.
+         A URL é atualizada com replaceState (sem recarregar); sem o parâmetro, valem os
+         defaults do servidor (ex.: Avisos abre sozinho quando há avisos). --}}
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const param = new URLSearchParams(location.search).get('abrir');
+
+            // Fonte de verdade: a URL quando o parâmetro existe; senão o DOM atual.
+            let abertos;
+            if (param !== null) {
+                abertos = new Set(param === '' ? [] : param.split(',').filter(Boolean));
+                document.querySelectorAll('.collapse[id]').forEach(function (el) {
+                    const trigger = document.querySelector('[data-bs-target="#' + el.id + '"]');
+                    if (!trigger) return;
+                    const abrir = abertos.has(el.id);
+                    el.classList.toggle('show', abrir);
+                    trigger.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+                    trigger.classList.toggle('collapsed', !abrir);
+                });
+            } else {
+                abertos = new Set([...document.querySelectorAll('.collapse[id].show')].map(el => el.id));
+            }
+
+            function sincronizarUrl() {
+                const q = new URLSearchParams(location.search);
+                const lista = [...abertos].filter(id => document.getElementById(id));
+                if (lista.length) q.set('abrir', lista.join(',')); else q.delete('abrir');
+                const qs = q.toString();
+                history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+            }
+
+            document.addEventListener('show.bs.collapse', e => {
+                if (!e.target.id) return;
+                abertos.add(e.target.id);
+                sincronizarUrl();
+            });
+            document.addEventListener('hide.bs.collapse', e => {
+                if (!e.target.id) return;
+                abertos.delete(e.target.id);
+                sincronizarUrl();
+            });
+        });
+    </script>
 @endsection

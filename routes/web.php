@@ -4,7 +4,9 @@ use App\Http\Controllers\Agenda\AgendaController;
 use App\Http\Controllers\Agenda\AgendaPublicaController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\Agenda\ServicoController;
+use App\Http\Controllers\AssinaturaMensalController;
 use App\Http\Controllers\CreditoServicoController;
+use App\Http\Controllers\FinanceiroController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PublicRegistrationController;
 use App\Http\Controllers\WhatsappController;
@@ -37,7 +39,6 @@ Route::middleware('guest')->prefix('agendar')->name('agendar.')->group(function 
 Route::middleware(['auth', 'whatsapp.verified'])->prefix('agendar')->name('agendar.')->group(function () {
     Route::get('/',            [AgendaPublicaController::class, 'index'])->name('index');
     Route::post('/reservar',   [AgendaPublicaController::class, 'reservar'])->name('reservar');
-    Route::post('/mensal',     [AgendaPublicaController::class, 'mensalComprar'])->name('mensal');
 });
 
 Route::get('/api/mensal/calcular', [AgendaPublicaController::class, 'mensalCalcular']);
@@ -45,6 +46,8 @@ Route::get('/api/mensal/calcular', [AgendaPublicaController::class, 'mensalCalcu
 Route::get('/dashboard', function () {
     $user     = auth()->user();
     $users    = User::where('excluido', '0')->orderBy('adm', 'desc')->orderBy('func', 'desc')->paginate(10);
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
     $clientes = User::where([['excluido', '0'], ['func', '0'], ['adm', '0']])->get();
     $servicos = ServicosModel::where('excluido', '0')->get();
     $mesAtual = now()->locale('pt_BR')->translatedFormat('F Y');
@@ -87,10 +90,7 @@ Route::get('/dashboard', function () {
         ? Aviso::with(['user', 'servico'])->whereNull('dispensado_at')->latest()->get()
         : collect();
 
-    // Ordens de pagamento: visíveis SOMENTE para administradores; paciente só as suas.
-    $ordensPagamento = $user->adm
-        ? OrdemPagamento::with(['user', 'criador'])->latest()->limit(50)->get()
-        : collect();
+    // Ordens de pagamento do cliente (as do admin foram para a tela /financeiro).
     $minhasOrdens = (!$user->adm && !$user->func)
         ? OrdemPagamento::where('user_id', $user->id)->latest()->get()
         : collect();
@@ -100,6 +100,7 @@ Route::get('/dashboard', function () {
     $pendentes = ($user->adm || $user->func)
         ? AgendamentoModel::with(['user', 'servico'])
             ->where('status', AgendamentoModel::STATUS_PAGO_AGUARDANDO)
+            ->whereNull('plano_mensal_id') // só avulsos — visitas de plano mensal não aparecem aqui
             ->when($user->func, fn($q) => $q->where('funcionario_id', $user->id))
             ->when($barbeiroSelecionado, fn($q) => $q->where('funcionario_id', $barbeiroSelecionado))
             ->orderBy('data_inicio')->get()
@@ -137,17 +138,18 @@ Route::get('/dashboard', function () {
 
     // Planos mensais (Fase C): staff vê todos; cliente vê os seus.
     $planos = ($user->adm || $user->func)
-        ? \App\Models\PlanoMensal::with(['user:id,name', 'servico:id,descricao', 'funcionario:id,name'])->latest()->limit(50)->get()
+        ? \App\Models\PlanoMensal::with(['user:id,name', 'servico:id,descricao', 'funcionario:id,name', 'itens.servico:id,descricao', 'assinatura'])->latest()->limit(50)->get()
         : collect();
     $meusPlanos = (!$user->adm && !$user->func)
-        ? \App\Models\PlanoMensal::with(['servico:id,descricao', 'funcionario:id,name'])->where('user_id', $user->id)->latest()->get()
+        ? \App\Models\PlanoMensal::with(['servico:id,descricao', 'funcionario:id,name', 'itens.servico:id,descricao'])->where('user_id', $user->id)->latest()->get()
         : collect();
 
-    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'ordensPagamento', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos', 'intencoes', 'minhasIntencoes'));
+    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos', 'intencoes', 'minhasIntencoes'));
 })->middleware(['auth', 'verified', 'whatsapp.verified'])->name('dashboard');
 
 Route::get('/api/horarios/{data}', [AgendaController::class, 'horarios']);
 Route::get('/api/dias-disponiveis/{ano}/{mes}', [AgendaController::class, 'diasDisponiveis']);
+Route::get('/api/dias-fixos/{ano}/{mes}', [AgendaController::class, 'diasFixos']);
 Route::get('/api/disponibilidade/{data}', [AgendaController::class, 'getSlotsDia'])->middleware('auth');
 Route::post('/api/disponibilidade/{data}', [AgendaController::class, 'salvarSlots'])->middleware('auth');
 Route::post('/api/agenda/horario-comercial', [AgendaController::class, 'salvarHorarioComercial'])->middleware('auth');
@@ -155,14 +157,17 @@ Route::post('/api/disponibilidade/semana/{domingo}', [AgendaController::class, '
 
 Route::post('add-usuario', [RegisteredUserController::class, 'store'])->middleware(['auth', 'verified'])->name('add-usuario');
 Route::post('delete-usuario', [RegisteredUserController::class, 'delete'])->middleware('auth')->name('delete-usuario');
+Route::post('usuario/excluir-definitivo', [RegisteredUserController::class, 'hardDelete'])->middleware('auth')->name('usuario.excluir-definitivo');
 Route::post('editar-usuario', [RegisteredUserController::class, 'editar'])->middleware('auth')->name('editar-usuario');
 Route::get('usuarios-search', [RegisteredUserController::class, 'search'])->middleware('auth')->name('usuarios.search');
 
 // ── Créditos/serviços contratados por cliente (somente staff) ─────────────────
 Route::middleware('auth')->group(function () {
+    Route::get('/api/clientes/busca',                          [CreditoServicoController::class, 'busca'])->name('clientes.busca');
     Route::get('/api/clientes/{userId}/creditos',              [CreditoServicoController::class, 'index'])->name('creditos.index');
     Route::post('/clientes/{userId}/creditos',                 [CreditoServicoController::class, 'store'])->name('creditos.store');
     Route::delete('/clientes/{userId}/creditos/{creditoId}',   [CreditoServicoController::class, 'destroy'])->name('creditos.destroy');
+    Route::get('/financeiro', [FinanceiroController::class, 'index'])->name('financeiro.index');
 });
 Route::resource('agenda', AgendaController::class)->middleware('auth');
 Route::post('agenda/{id}/confirmar', [AgendaController::class, 'confirmar'])->middleware('auth')->name('agenda.confirmar');
@@ -172,11 +177,11 @@ Route::post('agenda/{id}/recusar-intencao', [AgendaController::class, 'recusarIn
 Route::post('agenda/{id}/reenviar-lembrete', [AgendaController::class, 'reenviarLembrete'])->middleware('auth')->name('agenda.reenviar-lembrete');
 Route::post('agenda/{id}/comparecimento', [AgendaController::class, 'comparecimento'])->middleware('auth')->name('agenda.comparecimento');
 Route::post('usuario/{id}/remover-penalidade', [AgendaController::class, 'removerPenalidade'])->middleware('auth')->name('usuario.remover-penalidade');
-Route::post('usuario/{id}/indicar', [AgendaController::class, 'toggleIndicacao'])->middleware('auth')->name('usuario.indicar');
 Route::post('aviso/{id}/dispensar', [AgendaController::class, 'dispensarAviso'])->middleware('auth')->name('aviso.dispensar');
 Route::get('avisos-parcial', [AgendaController::class, 'avisosParcial'])->middleware('auth')->name('avisos.parcial');
 Route::get('agenda-search', [AgendaController::class, 'search'])->middleware('auth')->name('agenda.search');
 Route::resource('servico', ServicoController::class)->middleware('auth');
+Route::get('/api/servico/{servico}/composicao', [ServicoController::class, 'composicao'])->middleware('auth')->name('servico.composicao');
 Route::post('delete-servico', [ServicoController::class, 'delete'])->middleware('auth')->name('delete-servico');
 Route::post('editar-servico', [ServicoController::class, 'editar'])->middleware('auth')->name('editar-servico');
 
@@ -259,6 +264,10 @@ Route::middleware('auth')->group(function () {
     // Staff (adm/func) — criar/cancelar/excluir ordens (autorização no controller).
     Route::post('/ordens-pagamento',               [OrdemPagamentoController::class, 'store'])->name('ordens.store');
     Route::post('/planos-mensais',                 [OrdemPagamentoController::class, 'mensalStore'])->name('planos.store');
+    Route::get('/planos-mensais/{plano}/editar',   [OrdemPagamentoController::class, 'editarPlano'])->name('planos.editar');
+    Route::put('/planos-mensais/{plano}',          [OrdemPagamentoController::class, 'updatePlano'])->name('planos.update');
+    Route::post('/planos-mensais/{plano}/ativar',  [OrdemPagamentoController::class, 'ativarManual'])->name('planos.ativar');
+    Route::post('/assinaturas/{assinatura}/cancelar', [AssinaturaMensalController::class, 'destroy'])->name('assinaturas.cancelar');
     Route::post('/ordens-pagamento/{id}/cancelar', [OrdemPagamentoController::class, 'cancelar'])->name('ordens.cancelar');
     Route::delete('/ordens-pagamento/{id}',        [OrdemPagamentoController::class, 'destroy'])->name('ordens.destroy');
     // Paciente — tela de checkout (GET) e criação do link de pagamento (POST, throttle).

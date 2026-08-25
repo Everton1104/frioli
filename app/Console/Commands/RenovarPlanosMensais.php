@@ -3,12 +3,16 @@
 namespace App\Console\Commands;
 
 use App\Http\Controllers\WhatsappController;
+use App\Models\AssinaturaMensal;
 use App\Models\OrdemPagamento;
 use App\Models\PlanoMensal;
+use App\Services\PlanoMensalService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /*
  * Renovação automática de planos mensais recorrentes.
@@ -28,83 +32,110 @@ class RenovarPlanosMensais extends Command
 
     public function handle(): int
     {
-        $hoje      = now();
-        $dia       = (int) $hoje->format('j');
-        $diasNoMes = (int) $hoje->daysInMonth;
+        $hoje = now();
 
-        // Janela: últimos 10 dias do mês (dá tempo do cliente pagar antes de virar).
-        if ($dia < $diasNoMes - 9) {
-            $this->info('Fora da janela de renovação (últimos 10 dias do mês). Nada a fazer hoje.');
-            return self::SUCCESS;
-        }
-
-        $mesAtual = $hoje->copy()->startOfMonth();
-        $proximo  = $hoje->copy()->startOfMonth()->addMonth();
-
-        $planos = PlanoMensal::with(['servico', 'user'])
-            ->where('recorrente', 1)
-            ->where('status', PlanoMensal::STATUS_ATIVO)
-            ->where('mes', $mesAtual->toDateString())
-            ->get();
+        // Assinaturas ativas com renovação automática (algum plano recorrente=1).
+        $assinaturaIds = PlanoMensal::where('recorrente', 1)
+            ->whereHas('assinatura', fn ($q) => $q->where('status', AssinaturaMensal::STATUS_ATIVO))
+            ->pluck('assinatura_id')
+            ->unique();
 
         $gerados = 0;
-        foreach ($planos as $plano) {
-            // Idempotente: já existe plano do próximo mês para este slot?
-            $ja = PlanoMensal::where('user_id', $plano->user_id)
-                ->where('servico_id', $plano->servico_id)
-                ->where('funcionario_id', $plano->funcionario_id)
-                ->where('dia_semana', $plano->dia_semana)
-                ->where('hora', $plano->hora)
-                ->where('mes', $proximo->toDateString())
-                ->exists();
-            if ($ja) {
+        foreach ($assinaturaIds as $aid) {
+            $assinatura = AssinaturaMensal::with(['servicoBase', 'planos.itens.servico', 'user'])->find($aid);
+            if (!$assinatura || !$assinatura->user) {
                 continue;
             }
 
-            $servico = $plano->servico;
-            if (!$servico) {
+            $cicloAtual = $assinatura->cicloAtual(); // ciclo mais recente
+            if (!$cicloAtual) {
                 continue;
             }
-            $calc = PlanoMensal::calcular($servico, $proximo, (int) $plano->dia_semana);
 
-            $ordem = DB::transaction(function () use ($plano, $servico, $proximo, $calc) {
-                $novo = PlanoMensal::create([
-                    'user_id'         => $plano->user_id,
-                    'servico_id'      => $plano->servico_id,
-                    'funcionario_id'  => $plano->funcionario_id,
-                    'dia_semana'      => $plano->dia_semana,
-                    'hora'            => $plano->hora,
-                    'mes'             => $proximo,
-                    'unidades_total'  => $calc['unidades'],
-                    'unidades_usadas' => 0,
-                    'valor_total'     => $calc['valor_total'],
-                    'status'          => PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO,
-                    'recorrente'      => true,
-                ]);
+            // Próximo início e janela de geração.
+            $aPartirDe = $hoje->copy()->startOfDay();
+            if ($cicloAtual->data_fim) {
+                $fim = Carbon::parse($cicloAtual->data_fim);
+                // Só gera se o ciclo atual estiver prestes a acabar (<=14 dias) ou já acabou.
+                if ($hoje->floatDiffInDays($fim) > 14) {
+                    continue;
+                }
+                $aPartirDe = $fim->copy()->addDay();
+            } elseif ($cicloAtual->mes) {
+                // Legado sem janela: renova nos últimos 10 dias do mês-calendário.
+                $fimMes = Carbon::parse($cicloAtual->mes)->endOfMonth();
+                if ($hoje->floatDiffInDays($fimMes) > 9) {
+                    continue;
+                }
+                $aPartirDe = Carbon::parse($cicloAtual->mes)->startOfMonth()->addMonth();
+            } else {
+                continue;
+            }
 
-                $o = OrdemPagamento::create([
-                    'user_id'            => $plano->user_id,
-                    'criado_por'         => $plano->user_id,
-                    'plano_mensal_id'    => $novo->id,
-                    'valor'              => $calc['valor_total'],
-                    'descricao'          => $servico->descricao . ' (mensal ' . $calc['unidades'] . 'x)',
-                    'max_parcelas'       => OrdemPagamento::MAX_PARCELAS,
-                    'status'             => 'aberta',
-                    'external_reference' => (string) Str::uuid(),
-                ]);
-                $o->eventos()->create(['status' => 'aberta', 'origem' => 'renovacao']);
+            $itens = $cicloAtual->itens->map(fn ($i) => ['servico_id' => $i->servico_id, 'quantidade' => (int) $i->quantidade]);
+            if ($itens->isEmpty()) {
+                continue;
+            }
 
-                $novo->ordem_pagamento_id = $o->id;
-                $novo->save();
+            $args = [
+                'user_id'         => $assinatura->user_id,
+                'funcionario_id'  => $assinatura->funcionario_id,
+                'dia_semana'      => (int) $assinatura->dia_semana,
+                'hora'            => substr((string) $assinatura->hora, 0, 5),
+                'servico_base_id' => $assinatura->servico_base_id,
+                'itens'           => $itens,
+                'recorrente'      => true,
+                'criado_por'      => $assinatura->user_id,
+                'origem'          => 'renovacao',
+            ];
 
-                return $o;
-            });
+            $combo = \App\Models\ServicosModel::find($assinatura->servico_base_id);
 
-            $this->avisar($plano->user, $ordem);
+            if ($combo && $combo->temComposicao()) {
+                // Fase 5: renovação LENDO o combo master. A 5ª visita (em mês de 5
+                // semanas) é automática — repete a 1ª visita da distribuição.
+                $args['calc'] = PlanoMensal::calcularProximoCicloDeCombo(
+                    $combo, (int) $assinatura->dia_semana, $aPartirDe
+                );
+                if ($assinatura->dia_renovacao) {
+                    $args['dia_renovacao'] = (int) $assinatura->dia_renovacao;
+                }
+            } else {
+                $distribuicao = $cicloAtual->distribuicao ? collect($cicloAtual->distribuicao) : null;
+                $valoresExtra = $cicloAtual->valores_extra ?: [];
+
+                if ($distribuicao && $distribuicao->isNotEmpty()) {
+                    // Legado: distribuição semanal definida por ciclo.
+                    $args['distribuicao'] = $distribuicao->all();
+                    if (!empty($valoresExtra)) {
+                        $args['valores_extra'] = $valoresExtra;
+                    }
+                    $args['calc'] = PlanoMensal::calcularProximoCicloDistribuido(
+                        (int) $assinatura->dia_semana, $distribuicao, $aPartirDe, $valoresExtra
+                    );
+                    if ($assinatura->dia_renovacao) {
+                        $args['dia_renovacao'] = (int) $assinatura->dia_renovacao;
+                    }
+                } elseif ($assinatura->dia_renovacao) {
+                    // Legado: ciclo ancorado no dia preferido do cliente.
+                    $args['calc']          = PlanoMensal::calcularProximoCiclo((int) $assinatura->dia_semana, $itens, $aPartirDe, (int) $assinatura->dia_renovacao);
+                    $args['dia_renovacao'] = (int) $assinatura->dia_renovacao;
+                } else {
+                    $args['mes'] = $aPartirDe->copy()->startOfMonth();
+                }
+            }
+
+            try {
+                $ordem = PlanoMensalService::criarCiclo($args);
+            } catch (ValidationException $e) {
+                continue; // já existe ciclo sobreposto (idempotente)
+            }
+
+            $this->avisar($assinatura->user, $ordem);
             $gerados++;
         }
 
-        $this->info("Planos renovados para {$proximo->locale('pt_BR')->translatedFormat('F Y')}: {$gerados}");
+        $this->info("Planos renovados (renovação automática): {$gerados}");
         return self::SUCCESS;
     }
 
@@ -122,7 +153,7 @@ class RenovarPlanosMensais extends Command
             WhatsappController::enviarModelo(
                 env('PHONE_NUMBER_ID'),
                 $cliente->whatsapp,
-                env('WHATSAPP_TEMPLATE_ORDEM_PAGAMENTO', 'ordem_pagamento_disponivel'),
+                env('WHATSAPP_TEMPLATE_ORDEM_PAGAMENTO', 'ordem_pagamento_disponivel_fr'),
                 [
                     ['type' => 'text', 'text' => $nome],
                     ['type' => 'text', 'text' => $ordem->descricao],

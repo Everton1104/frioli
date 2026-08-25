@@ -1,9 +1,13 @@
 @extends("layouts.app")
 @section("title", "Agendar")
+@php use App\Models\PageContent; @endphp
+@section("style")
+    <link rel="stylesheet" href="{{ asset('css/frioli-guest.css') }}?v={{ time() }}">
+@endsection
 @section("main")
-<div class="container py-4" style="max-width: 720px">
-    <h2 class="mb-1" style="color: var(--marrom)">Agendar horário</h2>
-    <p class="text-secondary mb-4">Escolha o barbeiro, o serviço, o dia e um horário livre.</p>
+<div class="container fp py-4" style="max-width: 720px">
+    <h2 class="mb-1">{!! PageContent::def('agendar', 'titulo') !!}</h2>
+    <p class="text-secondary mb-4">{!! PageContent::def('agendar', 'intro') !!}</p>
 
     @if (session("status"))
         <div class="alert alert-info py-2">{{ session("status") }}</div>
@@ -88,107 +92,6 @@
         </form>
     @endif
 
-    @php
-        $podeMensal = $indicado && $servicosMensais->isNotEmpty() && $barbeiros->isNotEmpty();
-    @endphp
-    @if ($podeMensal)
-    <div class="card shadow-sm mt-4" style="border-color: var(--marrom)">
-        <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
-            <div>
-                <div class="fw-semibold" style="color: var(--marrom)">Plano mensal (horário fixo)</div>
-                <div class="small text-secondary">Garanta o mesmo horário toda semana. Clique para comprar ou renovar o seu plano.</div>
-            </div>
-            <button class="btn btn-sm btn-agendar" data-bs-toggle="modal" data-bs-target="#modal-mensal">Comprar / renovar plano</button>
-        </div>
-    </div>
-
-    <div class="modal fade" id="modal-mensal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="POST" action="{{ route("agendar.mensal") }}" id="form-mensal">
-                    @csrf
-                    <div class="modal-header">
-                        <h5 class="modal-title">Plano mensal</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Serviço</label>
-                            <select name="servico_id" id="m_servico" class="form-select" required>
-                                <option value="">Selecione...</option>
-                                @foreach ($servicosMensais as $s)
-                                    <option value="{{ $s->id }}">{{ $s->descricao }} — R$ {{ number_format($s->valor, 2, ",", ".") }}</option>
-                                @endforeach
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Barbeiro</label>
-                            <select name="funcionario_id" id="m_barbeiro" class="form-select" required>
-                                <option value="">Selecione...</option>
-                                @foreach ($barbeiros as $b)
-                                    <option value="{{ $b->id }}">{{ $b->name }}</option>
-                                @endforeach
-                            </select>
-                        </div>
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Dia da semana</label>
-                                <select name="dia_semana" id="m_dia" class="form-select" required>
-                                    <option value="">Selecione...</option>
-                                    @foreach (["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"] as $i => $d)
-                                        <option value="{{ $i }}">{{ $d }}</option>
-                                    @endforeach
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Horário</label>
-                                <input type="time" name="hora" id="m_hora" class="form-control" required>
-                            </div>
-                        </div>
-                        <div class="mt-3">
-                            <label class="form-label">Mês</label>
-                            <input type="month" name="mes" id="m_mes" class="form-control" value="{{ now()->copy()->startOfMonth()->addMonth()->format("Y-m") }}" required>
-                        </div>
-                        <div class="form-text mt-2">
-                            Valor total: <strong id="m_valor">—</strong>
-                            <span id="m_unidades" class="text-muted"></span>
-                        </div>
-                        <div class="form-check mt-3">
-                            <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="m_recorrente">
-                            <label class="form-check-label small" for="m_recorrente">
-                                Renovar todo mês automaticamente (o sistema gera a cobrança do próximo mês e te avisa pagar). Não é cartão salvo.
-                            </label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" class="btn btn-primary">Ir para o pagamento</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <script>
-    (function () {
-        const servico = document.getElementById('m_servico');
-        const dia = document.getElementById('m_dia');
-        const mes = document.getElementById('m_mes');
-        const valor = document.getElementById('m_valor');
-        const unidades = document.getElementById('m_unidades');
-        if (!servico) return;
-        function recalc() {
-            if (!servico.value || !dia.value || !mes.value) { valor.textContent = '—'; unidades.textContent = ''; return; }
-            fetch(`/api/mensal/calcular?servico_id=${servico.value}&dia_semana=${dia.value}&mes=${mes.value}`)
-                .then(r => r.json()).then(d => {
-                    if (d.error) { valor.textContent = '—'; unidades.textContent = ''; return; }
-                    valor.textContent = 'R$ ' + Number(d.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-                    unidades.textContent = '· ' + d.unidades + 'x no mês';
-                }).catch(() => { valor.textContent = '—'; unidades.textContent = ''; });
-        }
-        [servico, dia, mes].forEach(el => el.addEventListener('change', recalc));
-    })();
-    </script>
-    @endif
 </div>
 
 <style>

@@ -78,6 +78,22 @@
             /* Botões de submit (bg-gray-800) viram dourado da marca */
             [data-bs-theme="dark"] .bg-gray-800 { background-color: var(--marrom) !important; color: #1a1410 !important; }
             [data-bs-theme="dark"] .hover\:bg-gray-700:hover { background-color: #d9b978 !important; }
+
+            /* ── Mobile (barbeiro usa mais no celular) ───────────────────────── */
+            @media (max-width: 768px) {
+                /* Tabelas: scroll horizontal + fonte menor */
+                .table { font-size: 0.82rem; }
+                .table th, .table td { white-space: nowrap; padding: 0.4rem 0.5rem; }
+                /* Wrap de tabelas sem table-responsive */
+                .card-body > table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+                /* Modais: full height aproveitando a tela */
+                .modal-dialog { margin: 0.5rem; }
+                .modal-body { max-height: 70vh; }
+                /* Botões de ação nos cards: quebram linha se preciso */
+                .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+                /* Inputs: font-size 16px evita zoom do iOS */
+                .form-control, .form-select { font-size: 1rem; }
+            }
         </style>
     </head>
     <body>

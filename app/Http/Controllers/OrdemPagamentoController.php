@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\OrdemPagamento;
+use App\Models\PlanoMensal;
 use App\Services\InfinitePayService;
+use App\Services\PlanoMensalService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 // Ordens de pagamento: o staff (adm/func) cria/cancela; o paciente paga via
@@ -63,31 +66,46 @@ class OrdemPagamentoController extends Controller
         return redirect()->back()->with('msg', 'Ordem de pagamento criada com sucesso!');
     }
 
-    // ── Staff: criar plano mensal (horário fixo semanal) para um cliente ─────
-    // Espelha o antigo auto-atendimento do cliente (AgendaPublicaController::
-    // mensalComprar), porém o cliente é escolhido pelo staff. O plano nasce
-    // aguardando pagamento e o cliente recebe o link da ordem por WhatsApp
-    // (avisarPaciente); ao pagar, o webhook ativa o plano.
+    // ── Staff: criar plano mensal (combo multi-serviço, horário fixo) p/ cliente ──
+    // A composição (itens inclusos + quantidades) é definida aqui pelo staff; o
+    // cliente indicado só renova depois (AgendaPublicaController::mensalComprar
+    // replica os mesmos itens no próximo ciclo). Criação centralizada em
+    // PlanoMensalService::criarCiclo, que valida itens/slot e lança ValidationException.
     public function mensalStore(Request $request)
     {
         // Adm ou funcionário podem criar um plano mensal para um cliente.
         abort_unless(auth()->user()->adm || auth()->user()->func, 403);
 
         $dados = $request->validate([
-            'user_id'        => ['required', 'integer', 'exists:users,id'],
-            'servico_id'     => ['required', 'integer'],
-            'funcionario_id' => ['required', 'integer'],
-            'dia_semana'     => ['required', 'integer', 'between:0,6'],
-            'hora'           => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
-            'mes'            => ['required', 'date'],
-            'recorrente'     => ['nullable', 'boolean'],
+            'user_id'             => ['required', 'integer', 'exists:users,id'],
+            'servico_base_id'     => ['required', 'integer'],
+            'funcionario_id'      => ['required', 'integer'],
+            'dia_semana'          => ['required', 'integer', 'between:0,6'],
+            'hora'                => ['required', 'regex:/^([01]\d|2[0-3]):(00|15|30|45)$/'],
+            'mes'                 => ['nullable', 'date'],
+            'dia_renovacao'       => ['required', 'integer', 'between:1,31'],
+            // Fase 5: o combo (servico_base_id) define composição/distribuição/extra no
+            // cadastro (a 5ª visita repete a 1ª automaticamente). Aqui só o consumo no ato.
+            'consumir_no_ato'     => ['nullable', 'boolean'],
+            // Legado (combos sem composição definida no cadastro):
+            'itens_servico'       => ['nullable', 'array'],
+            'itens_servico.*'     => ['integer'],
+            'itens_qtd'           => ['nullable', 'array'],
+            'itens_qtd.*'         => ['nullable', 'integer', 'min:0'],
+            'distribuicao'        => ['nullable', 'array'],
+            'distribuicao.*'      => ['array'],
+            'distribuicao.*.*'    => ['integer'],
+            'valores_extra'       => ['nullable', 'array'],
+            'valores_extra.*'     => ['nullable', 'numeric', 'min:0'],
         ], [
-            'user_id.exists'         => 'Cliente inválido.',
-            'servico_id.required'    => 'Selecione o serviço.',
-            'funcionario_id.required'=> 'Selecione o barbeiro.',
-            'dia_semana.required'    => 'Selecione o dia da semana.',
-            'hora.required'          => 'Selecione o horário.',
-            'mes.required'           => 'Selecione o mês.',
+            'user_id.exists'           => 'Cliente inválido.',
+            'servico_base_id.required' => 'Selecione o combo (serviço mensal).',
+            'funcionario_id.required'  => 'Selecione o barbeiro.',
+            'dia_semana.required'      => 'Selecione o dia da semana.',
+            'hora.required'            => 'Selecione o horário.',
+            'mes.required'             => 'Selecione o mês.',
+            'itens_servico.required'   => 'Inclua ao menos 1 serviço no combo.',
+            'dia_renovacao.required'   => 'Escolha o melhor dia para pagar a renovação.',
         ]);
 
         // Cliente precisa ser cliente (não adm/func) e não excluído.
@@ -99,75 +117,39 @@ class OrdemPagamentoController extends Controller
             return redirect()->back()->withErrors(['user_id' => 'Cliente inválido.'])->withInput();
         }
 
-        $servico = \App\Models\ServicosModel::where('excluido', 0)
-            ->where('status', 1)
-            ->where('recorrente', 1)
-            ->where('valor', '>', 0)
-            ->find($dados['servico_id']);
-        if (!$servico) {
-            return redirect()->back()->withErrors(['servico_id' => 'Serviço mensal inválido.'])->withInput();
+        // Monta os itens do combo a partir dos arrays paralelos (legado — combos sem
+        // composição no cadastro). O form "Vincular plano" não envia itens/distribuicao.
+        $itens = collect();
+        foreach (($dados['itens_servico'] ?? []) as $i => $sid) {
+            $qtd = (int) ($dados['itens_qtd'][$i] ?? 0);
+            if ($sid && $qtd > 0) {
+                $itens->push(['servico_id' => (int) $sid, 'quantidade' => $qtd]);
+            }
         }
 
-        $funcionario = \App\Models\User::barbeiros()->find($dados['funcionario_id']);
-        if (!$funcionario) {
-            return redirect()->back()->withErrors(['funcionario_id' => 'Barbeiro inválido.'])->withInput();
-        }
-
-        $mes  = \Illuminate\Support\Carbon::parse($dados['mes'])->startOfMonth();
-        $hora = $dados['hora'] . ':00';
-        $calc = \App\Models\PlanoMensal::calcular($servico, $mes, (int) $dados['dia_semana']);
-
-        if ($calc['unidades'] < 2) {
-            return redirect()->back()->withErrors(['dia_semana' => 'Não há ocorrências suficientes neste mês.'])->withInput();
-        }
-
-        // 1 cliente por slot semanal de cada barbeiro no mês.
-        $existe = \App\Models\PlanoMensal::whereIn('status', [\App\Models\PlanoMensal::STATUS_ATIVO, \App\Models\PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
-            ->where('funcionario_id', $funcionario->id)
-            ->where('dia_semana', (int) $dados['dia_semana'])
-            ->where('hora', $hora)
-            ->where('mes', $mes->toDateString())
-            ->exists();
-        if ($existe) {
-            return redirect()->back()->withErrors(['funcionario_id' => 'Esse horário fixo já foi reservado para este barbeiro neste mês. Escolha outro horário.'])->withInput();
-        }
-
-        // Cria o plano do mês-alvo + ordem de pagamento (link avulso). Se marcado
-        // "recorrente", o command mensal (RenovarPlanosMensais) gera o próximo mês.
-        $ordem = DB::transaction(function () use ($cliente, $servico, $funcionario, $dados, $mes, $hora, $calc, $request) {
-            $plano = \App\Models\PlanoMensal::create([
-                'user_id'         => $cliente->id,
-                'servico_id'      => $servico->id,
-                'funcionario_id'  => $funcionario->id,
-                'dia_semana'      => (int) $dados['dia_semana'],
-                'hora'            => $hora,
-                'mes'             => $mes,
-                'unidades_total'  => $calc['unidades'],
-                'unidades_usadas' => 0,
-                'valor_total'     => $calc['valor_total'],
-                'status'          => \App\Models\PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO,
-                'recorrente'      => $request->boolean('recorrente'),
-            ]);
-
-            $o = OrdemPagamento::create([
-                'user_id'            => $cliente->id,
-                'criado_por'         => auth()->id(),
-                'plano_mensal_id'    => $plano->id,
-                'valor'              => $calc['valor_total'],
-                'descricao'          => $servico->descricao . ' (mensal ' . $calc['unidades'] . 'x)',
-                'max_parcelas'       => OrdemPagamento::MAX_PARCELAS,
-                'status'             => 'aberta',
-                'external_reference' => (string) \Illuminate\Support\Str::uuid(),
-            ]);
-            $o->eventos()->create(['status' => 'aberta', 'origem' => 'manual']);
-
-            $plano->ordem_pagamento_id = $o->id;
-            $plano->save();
-
-            return $o;
-        });
+        $ordem = PlanoMensalService::criarCiclo([
+            'user_id'         => $cliente->id,
+            'funcionario_id'  => (int) $dados['funcionario_id'],
+            'dia_semana'      => (int) $dados['dia_semana'],
+            'hora'            => $dados['hora'],
+            'servico_base_id' => (int) $dados['servico_base_id'],
+            'itens'           => $itens,
+            'dia_renovacao'   => (int) $dados['dia_renovacao'],
+            'distribuicao'    => !empty($dados['distribuicao']) ? $dados['distribuicao'] : null,
+            'valores_extra'   => !empty($dados['valores_extra']) ? $dados['valores_extra'] : null,
+            'consumir_no_ato' => $request->boolean('consumir_no_ato'),
+            'recorrente'      => true, // "Vincular plano" — sempre recorrente (renova sozinho).
+            'criado_por'      => auth()->id(),
+            'origem'          => 'manual',
+        ]);
 
         $this->avisarPaciente($cliente, $ordem);
+
+        // Avisa o staff quando for uma NOVA assinatura (slot fixo recém-reservado).
+        $plano = PlanoMensal::with('assinatura')->find($ordem->plano_mensal_id);
+        if ($plano && $plano->assinatura && $plano->assinatura->planos()->count() === 1) {
+            WhatsappController::avisarStaffReservaSlot($plano);
+        }
 
         return redirect()->back()->with('msg', 'Plano mensal criado. O cliente recebeu o link de pagamento no WhatsApp.');
     }
@@ -332,7 +314,7 @@ class OrdemPagamentoController extends Controller
             $r = WhatsappController::enviarModelo(
                 env('PHONE_NUMBER_ID'),
                 $paciente->whatsapp,
-                env('WHATSAPP_TEMPLATE_ORDEM_PAGAMENTO', 'ordem_pagamento_disponivel'),
+                env('WHATSAPP_TEMPLATE_ORDEM_PAGAMENTO', 'ordem_pagamento_disponivel_fr'),
                 [
                     ['type' => 'text', 'text' => $nome],
                     ['type' => 'text', 'text' => $ordem->descricao],
@@ -369,7 +351,7 @@ class OrdemPagamentoController extends Controller
             $r = WhatsappController::enviarModelo(
                 env('PHONE_NUMBER_ID'),
                 $paciente->whatsapp,
-                env('WHATSAPP_TEMPLATE_PAGAMENTO_APROVADO', 'pagamento_confirmado'),
+                env('WHATSAPP_TEMPLATE_PAGAMENTO_APROVADO', 'pagamento_confirmado_fr'),
                 [
                     ['type' => 'text', 'text' => $nome],
                     ['type' => 'text', 'text' => $valor],
@@ -386,5 +368,99 @@ class OrdemPagamentoController extends Controller
                 'ordem' => $ordem->id, 'msg' => $e->getMessage(),
             ]);
         }
+    }
+
+    // ── Edição de plano mensal (somente adm): quantidades + valor unitário com desconto ─
+    public function editarPlano(PlanoMensal $plano)
+    {
+        abort_unless(auth()->user()->adm, 403);
+        $plano->load('itens.servico', 'assinatura');
+
+        return response()->json([
+            'id'              => $plano->id,
+            'descricao'       => $plano->descricaoItens(),
+            'itens'           => $plano->itens->map(fn ($i) => [
+                'servico_id'     => $i->servico_id,
+                'descricao'      => $i->servico->descricao ?? '—',
+                'quantidade'     => (int) $i->quantidade,
+                'valor_unitario' => (float) $i->valor_unitario,
+            ]),
+            'dia_renovacao'     => $plano->assinatura?->dia_renovacao,
+            'servicos'          => \App\Models\ServicosModel::where('excluido', 0)
+                ->where('recorrente', 0)->orderBy('descricao')->get(['id', 'descricao', 'valor']),
+        ]);
+    }
+
+    public function updatePlano(Request $request, PlanoMensal $plano)
+    {
+        abort_unless(auth()->user()->adm, 403);
+
+        $dados = $request->validate([
+            'itens'                 => ['required', 'array'],
+            'itens.*.servico_id'    => ['required', 'integer'],
+            'itens.*.quantidade'    => ['required', 'integer', 'min:0'],
+            'itens.*.valor_unitario'=> ['required', 'numeric', 'min:0'],
+            'dia_renovacao'         => ['required', 'integer', 'between:1,31'],
+        ]);
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($plano, $dados) {
+            // Preserva o consumo já registrado por serviço (clampa à nova quantidade).
+            $usadosAntigos = $plano->itens->keyBy('servico_id')->map(fn ($i) => (int) $i->usados);
+            $plano->itens()->delete();
+
+            $valor = 0.0;
+            foreach ($dados['itens'] as $linha) {
+                $sid  = (int) $linha['servico_id'];
+                $qtd  = (int) $linha['quantidade'];
+                $unit = (float) $linha['valor_unitario'];
+                $valor += $qtd * $unit;
+                if ($qtd > 0) {
+                    $plano->itens()->create([
+                        'servico_id'     => $sid,
+                        'quantidade'     => $qtd,
+                        'usados'         => min($usadosAntigos[$sid] ?? 0, $qtd),
+                        'valor_unitario' => $unit,
+                    ]);
+                }
+            }
+            $plano->valor_total = round($valor, 2);
+            $plano->save();
+
+            if ($plano->assinatura) {
+                $plano->assinatura->dia_renovacao = (int) $dados['dia_renovacao'];
+                $plano->assinatura->save();
+            }
+        });
+
+        return redirect()->back()->with('msg', 'Plano atualizado.');
+    }
+
+    // ── Ativação manual de plano mensal (pagamento presencial: dinheiro/cartão na hora) ──
+    // O staff clica em "Ativar (pago no local)" no plano aguardando_pagamento. Replica o
+    // fluxo do webhook (ativarPlanoMensalSePago): ativa o plano, marca a ordem como
+    // aprovada e materializa as pré-reservas do ciclo.
+    public function ativarManual(Request $request, PlanoMensal $plano)
+    {
+        abort_unless($request->user()->adm || $request->user()->func, 403);
+
+        if ($plano->status !== PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO) {
+            return redirect()->back()->with('msg', 'Este plano não está aguardando pagamento.');
+        }
+
+        $plano->status = PlanoMensal::STATUS_ATIVO;
+        $plano->save();
+
+        if ($plano->ordemPagamento) {
+            $plano->ordemPagamento->status = 'approved';
+            $plano->ordemPagamento->save();
+            $plano->ordemPagamento->eventos()->create([
+                'status' => 'approved',
+                'origem' => 'manual_presencial',
+            ]);
+        }
+
+        app(\App\Http\Controllers\Agenda\AgendaController::class)->materializarPlano($plano);
+
+        return redirect()->back()->with('msg', 'Plano ativado (pagamento presencial). Visitas pré-reservadas.');
     }
 }

@@ -16,6 +16,22 @@ class CreditoServicoController extends Controller
         abort_unless($u && ($u->adm || $u->func), 403);
     }
 
+    // Busca de clientes para o input de pesquisa (axios) no "Novo plano mensal".
+    // Só clientes (não staff). Espelha o gate de cliente do mensalStore.
+    public function busca(Request $request)
+    {
+        $this->autorizar();
+        $q = trim((string) $request->query('q', ''));
+
+        return User::where('excluido', 0)
+            ->where('adm', 0)
+            ->where('func', 0)
+            ->when($q !== '', fn ($qq) => $qq->where('name', 'like', "%{$q}%"))
+            ->orderBy('name')
+            ->limit(10)
+            ->get(['id', 'name', 'whatsapp']);
+    }
+
     // Lista os pacotes contratados de um cliente, com usadas/restantes.
     public function index($userId)
     {
@@ -62,7 +78,11 @@ class CreditoServicoController extends Controller
         ]);
 
         $user    = User::findOrFail($userId);
-        $servico = ServicosModel::where('excluido', 0)->findOrFail($request->servico_id);
+        // Só serviços comuns (recorrente=0). Mensais só entram via "Novo plano mensal".
+        $servico = ServicosModel::where('excluido', 0)->where('recorrente', 0)->find($request->servico_id);
+        if (!$servico) {
+            return response()->json(['error' => 'Serviços mensais não podem ser adicionados aqui. Use "Novo plano mensal".'], 422);
+        }
 
         CreditoServico::create([
             'user_id'    => $user->id,

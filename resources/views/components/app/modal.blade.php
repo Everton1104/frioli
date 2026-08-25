@@ -8,7 +8,7 @@
 ])
 
 <div class="modal fade modal-lg" data-bs-backdrop="static" id="{{ $id }}" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header alert alert-{{ $color }}">
                 <h5 class="modal-title fs-3">{{ $title }}</h5>

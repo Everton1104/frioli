@@ -1,11 +1,15 @@
 @extends("layouts.app")
 @section("title", "Verificar WhatsApp")
+@php use App\Models\PageContent; @endphp
+@section("style")
+    <link rel="stylesheet" href="{{ asset('css/frioli-guest.css') }}?v={{ time() }}">
+@endsection
 @section("main")
-<div class="container py-5">
+<div class="container fp py-5">
     <div class="row justify-content-center">
         <div class="col-md-5">
             <div class="card shadow-sm">
-                <div class="card-header fw-bold">Verificar WhatsApp</div>
+                <div class="card-header fw-bold">{!! PageContent::def('whatsapp', 'verificar_titulo') !!}</div>
                 <div class="card-body">
                     @if(session('status'))
                         <div class="alert alert-success">{{ session('status') }}</div>

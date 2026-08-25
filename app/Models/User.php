@@ -34,6 +34,8 @@ class User extends Authenticatable
         'whatsapp_code',
         'whatsapp_code_expires_at',
         'whatsapp_verified_at',
+        'horario_inicio',
+        'horario_fim',
     ];
 
     /**
@@ -74,12 +76,6 @@ class User extends Authenticatable
     public function isPenalizado(): bool
     {
         return (bool) $this->penalizado;
-    }
-
-    // Cliente "indicado" pelo staff: liberado para comprar/renovar plano mensal pelo site.
-    public function isIndicado(): bool
-    {
-        return (bool) $this->indicado;
     }
 
     public function whatsappVerificado(): bool

@@ -10,12 +10,12 @@ use Illuminate\Support\Carbon;
 class TestarLembrete extends Command
 {
     protected $signature   = 'teste:lembrete {numero : Número WhatsApp de destino (com DDI, ex: 5511999999999)} {--agendamento= : ID do agendamento; se omitido, usa o próximo do sistema}';
-    protected $description = 'Envia o template confirmar_reagendar_consulta para um número de teste';
+    protected $description = 'Envia o template confirmar_reagendar_consulta_fr para um número de teste';
 
     public function handle(): int
     {
         $phoneId  = env('PHONE_NUMBER_ID');
-        $template = env('WHATSAPP_TEMPLATE_LEMBRETE', 'confirmar_reagendar_consulta');
+        $template = env('WHATSAPP_TEMPLATE_LEMBRETE', 'confirmar_reagendar_consulta_fr');
         $numero   = preg_replace('/\D/', '', $this->argument('numero'));
 
         if (!$phoneId) {
@@ -30,13 +30,13 @@ class TestarLembrete extends Command
         $agendamentoId = $this->option('agendamento');
 
         if ($agendamentoId) {
-            $agendamento = AgendamentoModel::with(['user', 'servico'])->find($agendamentoId);
+            $agendamento = AgendamentoModel::with(['user', 'servico', 'planoMensal.itens.servico', 'creditoServico.servico'])->find($agendamentoId);
             if (!$agendamento) {
                 $this->error("Agendamento #{$agendamentoId} não encontrado.");
                 return 1;
             }
         } else {
-            $agendamento = AgendamentoModel::with(['user', 'servico'])
+            $agendamento = AgendamentoModel::with(['user', 'servico', 'planoMensal.itens.servico', 'creditoServico.servico'])
                 ->where('data_inicio', '>', now())
                 ->orderBy('data_inicio')
                 ->first();
@@ -54,10 +54,18 @@ class TestarLembrete extends Command
                              ->translatedFormat('d \d\e F \d\e Y');
         $hora          = Carbon::parse($agendamento->data_inicio)->format('H:i');
 
+        // Mesmo formato do lembrete da véspera: saldo do pacote/plano concatenado
+        // no parâmetro da hora (ex.: "14:00 · corte 1/4, barba 1/4").
+        $saldo   = $agendamento->saldoPacoteTexto();
+        $horaMsg = $saldo !== '' ? "{$hora} · {$saldo}" : $hora;
+
         $this->line('');
         $this->info("Template : {$template}");
         $this->line("Destino  : {$numero}");
         $this->line("Agenda   : #{$agendamento->id} — {$nome} em {$data} às {$hora}");
+        if ($saldo !== '') {
+            $this->line("Saldo    : {$saldo}");
+        }
         $this->line("Botões   : confirmar_{$agendamento->id} / reagendar_{$agendamento->id}");
         $this->line('');
 
@@ -65,7 +73,7 @@ class TestarLembrete extends Command
             ['type' => 'text', 'text' => $nome],
             ['type' => 'text', 'text' => $nomeComercial],
             ['type' => 'text', 'text' => $data],
-            ['type' => 'text', 'text' => $hora],
+            ['type' => 'text', 'text' => $horaMsg],
         ], 'pt_BR', [
             'confirmar_' . $agendamento->id,
             'reagendar_' . $agendamento->id,

@@ -4,12 +4,14 @@ namespace App\Http\Controllers\Agenda;
 
 use App\Http\Controllers\Controller;
 use App\Models\AgendamentoModel;
+use App\Models\AssinaturaMensal;
 use App\Models\DisponibilidadeModel;
 use App\Models\OrdemPagamento;
 use App\Models\PageContent;
 use App\Models\PlanoMensal;
 use App\Models\ServicosModel;
 use App\Models\User;
+use App\Services\PlanoMensalService;
 use App\Services\RecaptchaService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -29,8 +31,7 @@ class AgendaPublicaController extends Controller
 {
     public function index(): View
     {
-        $user     = request()->user();
-        $indicado = (bool) ($user?->isIndicado() ?? false);
+        $user = request()->user();
 
         $servicos = ServicosModel::where('excluido', 0)
             ->where('status', 1)
@@ -41,26 +42,12 @@ class AgendaPublicaController extends Controller
             ->orderBy('descricao')
             ->get();
 
-        // Planos mensais (horário fixo) só aparecem para clientes "indicados" pelo
-        // staff — liberados a comprar/renovar pelo site.
-        $servicosMensais = $indicado
-            ? ServicosModel::where('excluido', 0)
-                ->where('status', 1)
-                ->where('visivel_cliente', 1)
-                ->where('recorrente', 1)
-                ->where('valor', '>', 0)
-                ->orderBy('descricao')
-                ->get()
-            : collect();
-
         $barbeiros = User::barbeiros()->get();
 
         return view('agendar.index', [
             'servicos'         => $servicos,
-            'servicosMensais'  => $servicosMensais,
             'barbeiros'        => $barbeiros,
             'penalizado'       => (bool) ($user?->isPenalizado() ?? false),
-            'indicado'         => $indicado,
             'whatsappAdmin'    => PageContent::get('contato', 'whatsapp_numero', '5511988245815'),
             'recaptchaSiteKey' => app(RecaptchaService::class)->siteKey(),
         ]);
@@ -198,118 +185,52 @@ class AgendaPublicaController extends Controller
         }
     }
 
-    /** Cálculo autoritativo: unidades (4 ou 5) + valor total do plano mensal. */
+    /** Cálculo autoritativo de um combo multi-serviço (unidades + valor + itens). */
     public function mensalCalcular(Request $request)
     {
-        $servico = $this->servicoMensalDisponivel($request->servico_id);
-        if (!$servico) {
-            return response()->json(['error' => 'Serviço inválido'], 422);
-        }
-        $dia = (int) $request->dia_semana;
-        if ($dia < 0 || $dia > 6) {
-            return response()->json(['error' => 'Dia inválido'], 422);
-        }
+        $dados = $request->validate([
+            'dia_semana'        => ['required', 'integer', 'between:0,6'],
+            'mes'               => ['required', 'date'],
+            'cap'               => ['nullable', 'integer', 'between:1,6'],
+            'itens_servico'     => ['nullable', 'array'],
+            'itens_servico.*'   => ['integer'],
+            'itens_qtd'         => ['nullable', 'array'],
+            'itens_qtd.*'       => ['nullable', 'integer', 'min:0'],
+            'distribuicao'      => ['nullable', 'array'],
+            'distribuicao.*'    => ['array'],
+            'distribuicao.*.*'  => ['integer'],
+            'valores_extra'     => ['nullable', 'array'],
+            'valores_extra.*'   => ['nullable', 'numeric', 'min:0'],
+        ]);
         try {
-            $mes = Carbon::parse($request->mes)->startOfMonth();
+            $mes = Carbon::parse($dados['mes'])->startOfMonth();
         } catch (\Throwable $e) {
             return response()->json(['error' => 'Mês inválido'], 422);
         }
 
-        return response()->json(PlanoMensal::calcular($servico, $mes, $dia));
-    }
+        $distribuicao = !empty($dados['distribuicao']) ? collect($dados['distribuicao']) : null;
+        $valoresExtra = $dados['valores_extra'] ?? [];
 
-    /**
-     * Compra/renovação de plano mensal pelo site (auto-atendimento). Disponível só
-     * para clientes "indicados" pelo staff. Espelha OrdemPagamentoController::
-     * mensalStore, porém o cliente é o próprio usuário autenticado; ao pagar, o
-     * webhook ativa o plano e materializa as pré-reservas (fluxo já existente).
-     */
-    public function mensalComprar(Request $request): RedirectResponse
-    {
-        $user = $request->user();
-        abort_unless($user->isIndicado(), 403, 'Compra de plano mensal não liberada.');
-
-        $dados = $request->validate([
-            'servico_id'     => ['required', 'integer'],
-            'funcionario_id' => ['required', 'integer'],
-            'dia_semana'     => ['required', 'integer', 'between:0,6'],
-            'hora'           => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
-            'mes'            => ['required', 'date'],
-            'recorrente'     => ['nullable', 'boolean'],
-        ], [
-            'servico_id.required'     => 'Selecione o serviço.',
-            'funcionario_id.required' => 'Selecione o barbeiro.',
-            'dia_semana.required'     => 'Selecione o dia da semana.',
-            'hora.required'           => 'Selecione o horário.',
-            'mes.required'            => 'Selecione o mês.',
-        ]);
-
-        $servico = $this->servicoMensalDisponivel($dados['servico_id']);
-        if (!$servico) {
-            return back()->withErrors(['servico_id' => 'Serviço mensal indisponível.'])->withInput();
+        if ($distribuicao && $distribuicao->isNotEmpty()) {
+            $calc = PlanoMensal::calcularComboDistribuido($distribuicao, $mes, (int) $dados['dia_semana'], $valoresExtra);
+        } else {
+            $itens = collect();
+            foreach (($dados['itens_servico'] ?? []) as $i => $sid) {
+                $qtd = (int) ($dados['itens_qtd'][$i] ?? 0);
+                if ($sid && $qtd > 0) {
+                    $itens->push(['servico_id' => (int) $sid, 'quantidade' => $qtd]);
+                }
+            }
+            if ($itens->isEmpty()) {
+                return response()->json(['error' => 'Inclua ao menos 1 serviço no combo.'], 422);
+            }
+            $calc = PlanoMensal::calcularCombo($itens, $mes, (int) $dados['dia_semana'], isset($dados['cap']) ? (int) $dados['cap'] : null);
         }
 
-        $funcionario = User::barbeiros()->find($dados['funcionario_id']);
-        if (!$funcionario) {
-            return back()->withErrors(['funcionario_id' => 'Barbeiro inválido.'])->withInput();
-        }
+        $calc['data_inicio'] = $calc['data_inicio'] ? $calc['data_inicio']->format('d/m/Y') : null;
+        $calc['data_fim']    = $calc['data_fim'] ? $calc['data_fim']->format('d/m/Y') : null;
 
-        $mes  = Carbon::parse($dados['mes'])->startOfMonth();
-        if ($mes->lt(Carbon::now()->startOfMonth())) {
-            return back()->withErrors(['mes' => 'Selecione um mês atual ou futuro.'])->withInput();
-        }
-        $hora = $dados['hora'] . ':00';
-        $calc = PlanoMensal::calcular($servico, $mes, (int) $dados['dia_semana']);
-
-        if ($calc['unidades'] < 2) {
-            return back()->withErrors(['dia_semana' => 'Não há ocorrências suficientes neste mês.'])->withInput();
-        }
-
-        // 1 cliente por slot semanal de cada barbeiro no mês.
-        $existe = PlanoMensal::whereIn('status', [PlanoMensal::STATUS_ATIVO, PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
-            ->where('funcionario_id', $funcionario->id)
-            ->where('dia_semana', (int) $dados['dia_semana'])
-            ->where('hora', $hora)
-            ->where('mes', $mes->toDateString())
-            ->exists();
-        if ($existe) {
-            return back()->withErrors(['funcionario_id' => 'Esse horário fixo já foi reservado para este barbeiro neste mês. Escolha outro horário.'])->withInput();
-        }
-
-        $ordem = DB::transaction(function () use ($user, $servico, $funcionario, $dados, $mes, $hora, $calc, $request) {
-            $plano = PlanoMensal::create([
-                'user_id'         => $user->id,
-                'servico_id'      => $servico->id,
-                'funcionario_id'  => $funcionario->id,
-                'dia_semana'      => (int) $dados['dia_semana'],
-                'hora'            => $hora,
-                'mes'             => $mes,
-                'unidades_total'  => $calc['unidades'],
-                'unidades_usadas' => 0,
-                'valor_total'     => $calc['valor_total'],
-                'status'          => PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO,
-                'recorrente'      => $request->boolean('recorrente'),
-            ]);
-
-            $o = OrdemPagamento::create([
-                'user_id'            => $user->id,
-                'criado_por'         => $user->id,
-                'plano_mensal_id'    => $plano->id,
-                'valor'              => $calc['valor_total'],
-                'descricao'          => $servico->descricao . ' (mensal ' . $calc['unidades'] . 'x)',
-                'max_parcelas'       => OrdemPagamento::MAX_PARCELAS,
-                'status'             => 'aberta',
-                'external_reference' => (string) Str::uuid(),
-            ]);
-            $o->eventos()->create(['status' => 'aberta', 'origem' => 'checkout']);
-
-            $plano->ordem_pagamento_id = $o->id;
-            $plano->save();
-
-            return $o;
-        });
-
-        return redirect()->route('pagamentos.pagar', $ordem);
+        return response()->json($calc);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -387,4 +308,5 @@ class AgendaPublicaController extends Controller
         [$h, $m] = array_pad(explode(':', $time), 2, '0');
         return ((int) $h) * 60 + (int) $m;
     }
+
 }

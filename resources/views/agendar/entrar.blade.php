@@ -5,7 +5,7 @@
         <div class="text-red-700 text-sm mb-4">{{ session('error') }}</div>
     @endif
 
-    <p class="text-sm mb-4" style="color:#3a2a12">
+    <p class="text-sm mb-4">
         Informe seus dados para <strong>agendar online</strong>. Enviamos um código de
         confirmação no WhatsApp.
     </p>
@@ -33,6 +33,6 @@
     </form>
 
     <div class="mt-4 text-center">
-        <a href="{{ route('login') }}" class="text-sm underline" style="color:#3a2a12">Já tem conta? Entrar</a>
+        <a href="{{ route('login') }}" class="text-sm underline">Já tem conta? Entrar</a>
     </div>
 </x-guest-layout>

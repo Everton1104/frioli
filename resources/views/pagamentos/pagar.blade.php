@@ -1,11 +1,13 @@
 @extends('layouts.app')
-
+@php use App\Models\PageContent; @endphp
 @section('title', 'Pagar ordem')
-
+@section('style')
+    <link rel="stylesheet" href="{{ asset('css/frioli-guest.css') }}?v={{ time() }}">
+@endsection
 @section('main')
-<div class="container mb-5">
+<div class="container fp mb-5">
     <div class="my-3">
-        <p class="fs-4">Pagamento</p>
+        <h2 class="mb-0">{!! PageContent::def('checkout', 'titulo') !!}</h2>
     </div>
 
     <div class="row justify-content-center">
@@ -20,7 +22,7 @@
                         @if((int) $ordem->max_parcelas > 1)
                             Em até <strong>{{ $ordem->max_parcelas }}x</strong>, sendo {{ $semJuros }}x sem juros (você escolhe no pagamento).
                         @else
-                            À vista.
+                            À vista — Pix, débito ou crédito.
                         @endif
                     </p>
                 </div>
@@ -29,8 +31,8 @@
             {{-- Ação: gerar o link e ir ao checkout da InfinitePay --}}
             <div class="card shadow">
                 <div class="card-body text-center">
-                    <p class="mb-3 text-muted">Você será direcionado ao ambiente seguro de pagamento para finalizar com cartão (à vista ou parcelado) ou Pix.</p>
-                    <button id="btn-pagar" class="btn btn-primary btn-lg w-100">Ir para o pagamento</button>
+                    <p class="mb-3 text-muted">{!! PageContent::def('checkout', 'nota') !!}</p>
+                    <button id="btn-pagar" class="btn btn-primary btn-lg w-100">{{ PageContent::def('checkout', 'intro') }}</button>
                     <div id="pagar-erro" class="alert alert-danger mt-3 d-none" role="alert"></div>
                 </div>
             </div>

@@ -1,16 +1,18 @@
 @extends('layouts.app')
-
+@php use App\Models\PageContent; @endphp
 @section('title', 'Pagamento')
-
+@section('style')
+    <link rel="stylesheet" href="{{ asset('css/frioli-guest.css') }}?v={{ time() }}">
+@endsection
 @section('main')
-<div class="container mb-5">
+<div class="container fp mb-5">
     <div class="row justify-content-center mt-3">
         <div class="col-lg-7">
             <div class="card shadow">
                 <div class="card-body text-center">
                     <div id="retorno-icon" class="display-6 mb-2">⏳</div>
-                    <h5 id="retorno-titulo" class="mb-2 text-warning">Aguardando confirmação do pagamento</h5>
-                    <p id="retorno-msg" class="text-muted mb-3">Estamos confirmando seu pagamento com a operadora — em geral leva menos de 1 minuto. Avisaremos por WhatsApp assim que for confirmado.</p>
+                    <h5 id="retorno-titulo" class="mb-2 text-warning">{!! PageContent::def('retorno', 'titulo') !!}</h5>
+                    <p id="retorno-msg" class="text-muted mb-3">{!! PageContent::def('retorno', 'msg') !!}</p>
 
                     <div id="retorno-ok" class="d-none">
                         <p class="text-success fw-semibold mb-3">Pagamento confirmado com sucesso!</p>

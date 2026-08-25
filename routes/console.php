@@ -12,15 +12,10 @@ Artisan::command('inspire', function () {
 // Garanta que o cron do servidor esteja configurado:
 //   * * * * * cd /caminho/do/projeto && php artisan schedule:run >> /dev/null 2>&1
 
-// Lembrete diário: todo dia às 17h, para todas as consultas do dia seguinte.
-Schedule::command('lembretes:enviar diario')
+// Lembrete da véspera: todo dia às 17h, para todas as consultas do dia seguinte.
+// (Unificado: um único lembrete que já vale como confirmação oficial.)
+Schedule::command('lembretes:enviar')
     ->dailyAt('17:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Lembrete de 2h antes: a cada 15 min (cobre horários com intervalos de 15 minutos).
-Schedule::command('lembretes:enviar 2h')
-    ->everyFifteenMinutes()
     ->withoutOverlapping()
     ->runInBackground();
 
@@ -45,3 +40,7 @@ Schedule::command('planos:expirar')->dailyAt('03:17')->withoutOverlapping();
 // recorrentes ativos (link avulso) e avisa o cliente pagar. O próprio command
 // checa a janela e é idempotente.
 Schedule::command('planos:renovar')->dailyAt('04:00')->withoutOverlapping();
+
+// Desconto de visitas: ao abrir a semana (salvarSemana) E backstop diário às 23:30
+// (caso o staff abra tudo e não interaja mais). Ambos chamam o mesmo método idempotente.
+Schedule::command('planos:descontar-visitas')->dailyAt('23:30')->withoutOverlapping();

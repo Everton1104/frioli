@@ -1,15 +1,18 @@
 @extends("layouts.app")
 @section("title", "Cadastrar WhatsApp")
+@php use App\Models\PageContent; @endphp
+@section("style")
+    <link rel="stylesheet" href="{{ asset('css/frioli-guest.css') }}?v={{ time() }}">
+@endsection
 @section("main")
-<div class="container py-5">
+<div class="container fp py-5">
     <div class="row justify-content-center">
         <div class="col-md-5">
             <div class="card shadow-sm">
-                <div class="card-header fw-bold">Confirmar número de WhatsApp</div>
+                <div class="card-header fw-bold">{!! PageContent::def('whatsapp', 'cadastrar_titulo') !!}</div>
                 <div class="card-body">
                     <p class="text-muted mb-4">
-                        Para continuar, precisamos verificar o seu número de WhatsApp.<br>
-                        Informe abaixo e enviaremos um código de confirmação.
+                        {!! PageContent::def('whatsapp', 'cadastrar_texto') !!}
                     </p>
 
                     <form method="POST" action="{{ route('cadastrar.whatsapp.salvar') }}">

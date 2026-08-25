@@ -20,8 +20,8 @@
             <x-input-error :messages="$errors->get('whatsapp')" class="mt-2" />
 
             @if(session('cadastro_sugerido'))
-                <p class="text-sm mt-2 mb-0" style="color:#000;">
-                    Deseja se cadastrar? <a href="{{ route('agendar.entrar') }}" style="color:#000; font-weight:600; text-decoration:underline;">Clique aqui</a>.
+                <p class="text-sm mt-2 mb-0">
+                    Deseja se cadastrar? <a href="{{ route('agendar.entrar') }}" style="font-weight:600; text-decoration:underline;">Clique aqui</a>.
                 </p>
             @endif
         </div>

@@ -13,7 +13,7 @@ use App\Models\OrdemPagamento;
 use App\Models\PlanoMensal;
 use App\Models\ServicosModel;
 use App\Models\User;
-use App\Services\InfinitePayService;
+use App\Services\PlanoMensalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
@@ -38,6 +38,31 @@ class AgendaController extends Controller
             ->values();
 
         return response()->json($dias);
+    }
+
+    // ── API: dias NÃO liberados (sem slot) mas com agendamentos fixos (ex.:
+    // pré-reservas/visitas de plano mensal). Avisa a equipe que há atendimento
+    // marcado num dia que ainda não foi aberto na grade. = agendados − liberados.
+    public function diasFixos($ano, $mes)
+    {
+        $fid = request('funcionario_id');
+
+        $diasAgendados = AgendamentoModel::whereYear('data_inicio', $ano)
+            ->whereMonth('data_inicio', $mes)
+            ->whereIn('status', AgendamentoModel::OCUPANTES)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
+            ->selectRaw('DAY(data_inicio) as dia')
+            ->distinct()
+            ->pluck('dia');
+
+        $diasLiberados = DisponibilidadeModel::whereYear('data', $ano)
+            ->whereMonth('data', $mes)
+            ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
+            ->selectRaw('DAY(data) as dia')
+            ->distinct()
+            ->pluck('dia');
+
+        return response()->json($diasAgendados->diff($diasLiberados)->values());
     }
 
     // ── API: todos os slots do dia com status e quem está agendado ───────────
@@ -65,6 +90,8 @@ class AgendaController extends Controller
             ])
             ->whereDate('data_inicio', $data)
             ->when($fid, fn($q) => $q->where('funcionario_id', $fid))
+            // Estados "mortos" (slot já liberado) não são desenhados na agenda.
+            ->whereNotIn('status', [AgendamentoModel::STATUS_RECUSADO, AgendamentoModel::STATUS_CANCELADO])
             ->orderBy('data_inicio')
             ->get();
 
@@ -110,23 +137,46 @@ class AgendaController extends Controller
     public function salvarHorarioComercial(Request $request)
     {
         $user = auth()->user();
-        if (!$user || !$user->adm) {
+        if (!$user || (!$user->adm && !$user->func)) {
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 
         $data = $request->validate([
             'inicio' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
             'fim'    => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
+            'funcionario_id' => ['nullable', 'integer'],
         ]);
 
-        foreach (['inicio' => 'comercial_inicio', 'fim' => 'comercial_fim'] as $campo => $key) {
-            \App\Models\PageContent::updateOrCreate(
-                ['section' => 'agenda', 'key' => $key],
-                ['value' => $data[$campo], 'type' => 'text', 'label' => "Agenda — horário comercial ($campo)"]
-            );
+        // Alvo da janela: func → si mesmo; adm → o barbeiro informado; sem alvo →
+        // padrão global (fallback de quem ainda não definiu a sua).
+        if ($user->func) {
+            $target = $user;
+        } elseif ($request->filled('funcionario_id')) {
+            $target = User::where('id', $request->input('funcionario_id'))->where('func', 1)->first();
+            if (!$target) {
+                return response()->json(['error' => 'Barbeiro não encontrado.'], 404);
+            }
+        } else {
+            $target = null;
         }
 
-        return response()->json(['ok' => true, 'inicio' => $data['inicio'], 'fim' => $data['fim']]);
+        if ($target) {
+            $target->update(['horario_inicio' => $data['inicio'], 'horario_fim' => $data['fim']]);
+        } else {
+            foreach (['inicio' => 'comercial_inicio', 'fim' => 'comercial_fim'] as $campo => $key) {
+                \App\Models\PageContent::updateOrCreate(
+                    ['section' => 'agenda', 'key' => $key],
+                    ['value' => $data[$campo], 'type' => 'text', 'label' => "Agenda — horário comercial ($campo)"]
+                );
+            }
+        }
+
+        return response()->json([
+            'ok'     => true,
+            'inicio' => $data['inicio'],
+            'fim'    => $data['fim'],
+            'alvo'   => $target ? (int) $target->id : 'global',
+        ]);
     }
 
     // ── API: aplicar o horário comercial a uma semana inteira (dom→sáb) ───────
@@ -148,17 +198,9 @@ class AgendaController extends Controller
             return response()->json(['error' => 'A data base precisa ser um domingo.'], 422);
         }
 
-        $horaIni = \App\Models\PageContent::get('agenda', 'comercial_inicio', '08:00');
-        $horaFim = \App\Models\PageContent::get('agenda', 'comercial_fim', '17:45');
-        [$hI, $mI] = array_pad(explode(':', $horaIni), 2, '0');
-        [$hF, $mF] = array_pad(explode(':', $horaFim), 2, '0');
-        $cursor = Carbon::createFromTime((int) $hI, (int) $mI, 0);
-        $fim    = Carbon::createFromTime((int) $hF, (int) $mF, 0);
-        $slots  = [];
-        while ($cursor <= $fim) {
-            $slots[] = $cursor->format('H:i:s');
-            $cursor->addMinutes(15);
-        }
+        // Padrão global (fallback para o barbeiro que ainda não definiu a sua janela).
+        $globalIni = \App\Models\PageContent::get('agenda', 'comercial_inicio', '08:00');
+        $globalFim = \App\Models\PageContent::get('agenda', 'comercial_fim', '17:45');
 
         // Barbeiros-alvo: func → só si; adm → 'all' (todos os barbeiros) ou um específico.
         if ($user->func) {
@@ -168,6 +210,18 @@ class AgendaController extends Controller
             $alvo = ($fidParam === 'all' || !$fidParam)
                 ? User::barbeiros()->pluck('id')->all()
                 : [(int) $fidParam];
+        }
+
+        // Janela POR BARBEIRO: cada um pode ter um horário diferente (ex.: func1
+        // 07:00–18:00, func2 09:00–20:00). A semana abre com a janela de cada um;
+        // se o barbeiro não definiu, usa o padrão global.
+        $barbeirosAlvo = User::whereIn('id', $alvo)->get()->keyBy('id');
+        $slotsPorBarbeiro = [];
+        foreach ($alvo as $fid) {
+            $b    = $barbeirosAlvo->get($fid);
+            $hIni = ($b && $b->horario_inicio) ? $b->horario_inicio : $globalIni;
+            $hFim = ($b && $b->horario_fim) ? $b->horario_fim : $globalFim;
+            $slotsPorBarbeiro[$fid] = $this->gerarSlotsDia($hIni, $hFim);
         }
 
         $preenchidos = [];
@@ -181,7 +235,7 @@ class AgendaController extends Controller
                     $ignorado = true;
                     continue;
                 }
-                foreach ($slots as $hora) {
+                foreach ($slotsPorBarbeiro[$fid] ?? [] as $hora) {
                     DisponibilidadeModel::firstOrCreate(
                         ['funcionario_id' => $fid, 'data' => $dia, 'hora' => $hora],
                         ['created_by' => $user->id]
@@ -197,14 +251,44 @@ class AgendaController extends Controller
 
         // Semana aberta: pré-reserva os slots fixos de clientes mensais (planos ativos).
         $this->materializarPlanosSemana($alvo, $base);
+        // ...e reserva os slots de assinaturas ativas sem ciclo pago nesta semana
+        // (cliente sem saldo / aguardando renovação) — mantém o horário reservado.
+        $this->materializarReservasSemana($alvo, $base);
+
+        // Desconta visitas vencidas (data passou) — o staff vê o saldo atualizado ao
+        // abrir a agenda. Substitui o antigo command diário às 23:30.
+        PlanoMensalService::descontarVisitasVencidas();
+
+        // Janela exibida no alerta: a do primeiro barbeiro-alvo (representativa).
+        $primB  = $alvo ? $barbeirosAlvo->get($alvo[0]) : null;
+        $respI  = ($primB && $primB->horario_inicio) ? $primB->horario_inicio : $globalIni;
+        $respF  = ($primB && $primB->horario_fim) ? $primB->horario_fim : $globalFim;
 
         return response()->json([
             'ok'          => true,
             'preenchidos' => $preenchidos,
             'ignorados'   => $ignorados,
-            'inicio'      => $horaIni,
-            'fim'         => $horaFim,
+            'inicio'      => $respI,
+            'fim'         => $respF,
         ]);
+    }
+
+    /**
+     * Gera a lista de slots de 15 em 15 minutos (H:i:s) dentro da janela dada.
+     * Usado ao abrir a semana — cada barbeiro usa a sua própria janela.
+     */
+    private function gerarSlotsDia(string $horaIni, string $horaFim): array
+    {
+        [$hI, $mI] = array_pad(explode(':', $horaIni), 2, '0');
+        [$hF, $mF] = array_pad(explode(':', $horaFim), 2, '0');
+        $cursor = Carbon::createFromTime((int) $hI, (int) $mI, 0);
+        $fim    = Carbon::createFromTime((int) $hF, (int) $mF, 0);
+        $slots  = [];
+        while ($cursor <= $fim) {
+            $slots[] = $cursor->format('H:i:s');
+            $cursor->addMinutes(15);
+        }
+        return $slots;
     }
 
     // ── API: salvar/substituir todos os slots de um dia ──────────────────────
@@ -598,6 +682,16 @@ class AgendaController extends Controller
         if ($dataMudou) {
             $agendamento->pre_confirmado_em = null;
             $agendamento->confirmado_em     = null;
+
+            // Remarcação de visita de plano já descontada (o desconto é por data):
+            // devolve a unidade e limpa consumo_plano p/ o command descontar na nova data.
+            if ($agendamento->plano_mensal_id && !empty($agendamento->consumo_plano)) {
+                $plano = PlanoMensal::with('itens')->find($agendamento->plano_mensal_id);
+                if ($plano) {
+                    $plano->restaurarVisita($agendamento->consumo_plano);
+                }
+                $agendamento->consumo_plano = null;
+            }
         }
         $agendamento->save();
 
@@ -653,16 +747,19 @@ class AgendaController extends Controller
         }
 
         if ($isEdicao) {
-            // confirmacao_reagendamento: nome, nome_comercial, data, hora
-            WhatsappController::enviarModelo($phoneId, $user->whatsapp, 'confirmacao_reagendamento', [
+            // confirmacao_reagendamento_fr: nome, nome_comercial, data, hora
+            // (o "confirmacao_reagendamento" sem sufixo é o template da clínica no
+            // WABA compartilhado — falava "consulta" para cliente da barbearia)
+            WhatsappController::enviarModelo($phoneId, $user->whatsapp, env('WHATSAPP_TEMPLATE_CONFIRMACAO_REAGENDAMENTO', 'confirmacao_reagendamento_fr'), [
                 ['type' => 'text', 'text' => $nome],
                 ['type' => 'text', 'text' => env('WHATSAPP_NOME_COMERCIAL', config('app.name'))],
                 ['type' => 'text', 'text' => $data],
                 ['type' => 'text', 'text' => $hora],
             ]);
         } else {
-            // confirmacao_agendamento: nome, data+hora, servico, numero de confirmacao
-            WhatsappController::enviarModelo($phoneId, $user->whatsapp, 'confirmacao_agendamento', [
+            // confirmacao_agendamento_fr: nome, data+hora, servico, numero de confirmacao
+            // (template próprio do frioli — o "confirmacao_agendamento" do WABA é da clínica)
+            WhatsappController::enviarModelo($phoneId, $user->whatsapp, env('WHATSAPP_TEMPLATE_CONFIRMACAO_AGENDAMENTO', 'confirmacao_agendamento_fr'), [
                 ['type' => 'text', 'text' => $nome],
                 ['type' => 'text', 'text' => $data . ' às ' . $hora],
                 ['type' => 'text', 'text' => $servico],
@@ -679,7 +776,9 @@ class AgendaController extends Controller
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 
-        $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
+        $agendamento = AgendamentoModel::with([
+            'user', 'servico', 'planoMensal.itens.servico', 'creditoServico.servico',
+        ])->findOrFail($id);
         if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
             return response()->json(['error' => 'Não autorizado'], 403);
         }
@@ -701,11 +800,16 @@ class AgendaController extends Controller
                              ->translatedFormat('d \d\e F \d\e Y');
         $hora          = Carbon::parse($agendamento->data_inicio)->format('H:i');
 
+        // Saldo do pacote/plano concatenado no parâmetro da hora (mesmo formato do
+        // lembrete automático): ex.: "14:00 · corte 1/4, barba 1/4".
+        $saldo   = $agendamento->saldoPacoteTexto();
+        $horaMsg = $saldo !== '' ? "{$hora} · {$saldo}" : $hora;
+
         $resultado = WhatsappController::enviarModelo($phoneId, $cliente->whatsapp, $template, [
             ['type' => 'text', 'text' => $nome],
             ['type' => 'text', 'text' => $nomeComercial],
             ['type' => 'text', 'text' => $data],
-            ['type' => 'text', 'text' => $hora],
+            ['type' => 'text', 'text' => $horaMsg],
         ], 'pt_BR', [
             'confirmar_' . $agendamento->id,
             'reagendar_' . $agendamento->id,
@@ -715,8 +819,8 @@ class AgendaController extends Controller
             return response()->json(['error' => $resultado['msg'] ?? 'Falha ao enviar lembrete.'], 422);
         }
 
-        // Envio manual substitui a véspera: marca o lembrete '24h' como enviado para o
-        // cron diário não reenviar. O de '2h' continua liberado e será disparado pelo cron.
+        // Envio manual substitui o lembrete da véspera: marca '24h' como enviado para o
+        // cron diário não reenviar (a véspera é agora o único lembrete).
         LembreteConsulta::updateOrCreate(
             ['agendamento_id' => $agendamento->id, 'tipo' => '24h'],
             ['status' => 'enviado', 'erro_msg' => null],
@@ -732,9 +836,14 @@ class AgendaController extends Controller
             return response()->json(['error' => 'Não autorizado'], 403);
         }
 
-        $agendamento = AgendamentoModel::with(['user', 'servico'])->findOrFail($id);
+        $agendamento = AgendamentoModel::with(['user', 'servico', 'planoMensal.itens.servico'])->findOrFail($id);
         if ($user->func && (int) $agendamento->funcionario_id !== (int) $user->id) {
             return response()->json(['error' => 'Não autorizado'], 403);
+        }
+        // Reserva "sem saldo" (aguardando renovação): não pode ser confirmada/atendida
+        // enquanto o cliente não renovar o plano.
+        if ($agendamento->status === AgendamentoModel::STATUS_RESERVA_RENOVACAO) {
+            return response()->json(['error' => 'Cliente sem saldo neste plano — renove o plano para atender.'], 422);
         }
         $eraConfirmado = (bool) $agendamento->confirmado;
         $agendamento->confirmado    = 1;
@@ -746,10 +855,8 @@ class AgendaController extends Controller
         }
         $agendamento->save();
 
-        // Plano mensal: desconta 1 unidade ao confirmar pela primeira vez.
-        if (!$eraConfirmado && $agendamento->plano_mensal_id) {
-            $this->descontarPlanoMensal($agendamento->plano_mensal_id);
-        }
+        // O desconto da visita do plano mensal é por data (command planos:descontar-visitas),
+        // não na confirmação. Aqui só marcamos a presença (confirmado/status).
 
         $this->notificarWhatsApp($agendamento, false);
 
@@ -758,8 +865,10 @@ class AgendaController extends Controller
 
     /**
      * Recusa um agendamento do booking público (pago ou pendente): marca
-     * STATUS_RECUSADO (libera o slot), tenta reembolso automático da ordem
-     * vinculada (best-effort → fallback 'reembolso_pendente') e avisa o cliente.
+     * STATUS_RECUSADO (libera o slot e some da agenda) e, quando houve pagamento
+     * online aprovado, credita 1 unidade do serviço ao cliente (pacote avulso,
+     * sem validade) para remarcar. O dinheiro NÃO é reembolso por aqui — a
+     * devolução, se pedida, é combinada diretamente com o barbeiro via WhatsApp.
      */
     public function recusar($id)
     {
@@ -785,40 +894,48 @@ class AgendaController extends Controller
         $agendamento->status = AgendamentoModel::STATUS_RECUSADO;
         $agendamento->save();
 
-        // Reembolso da ordem aprovada vinculada (best-effort → fallback manual).
-        // "Pagar no local" não tem ordem de pagamento online — nada a reembolsar.
-        $reembolso = ['ok' => false, 'motivo' => 'Sem ordem aprovada vinculada'];
+        // Pagamento online aprovado → o valor vira 1 unidade de crédito. A ordem
+        // PERMANECE 'approved' (o registro do evento documenta a conversão).
+        // "Pagar no local" e pendentes sem ordem não geram crédito (nada foi pago).
+        $credito = false;
+        $motivo  = 'Sem pagamento online';
 
-        if ($agendamento->pagar_no_local) {
-            $reembolso = ['ok' => true, 'motivo' => 'Sem pagamento online (pagar no local)'];
-        } else {
+        if (!$agendamento->pagar_no_local) {
             $ordem = OrdemPagamento::where('agendamento_id', $agendamento->id)
                 ->whereIn('status', ['approved'])
                 ->latest('id')
                 ->first();
 
             if ($ordem) {
-                $reembolso = app(InfinitePayService::class)->reembolsar($ordem);
-                $ordem->status = $reembolso['ok'] ? 'refunded' : 'reembolso_pendente';
-                $ordem->eventos()->create([
-                    'status'  => $ordem->status,
-                    'origem'  => 'manual',
-                    'payload' => $reembolso,
+                CreditoServico::create([
+                    'user_id'    => $agendamento->user_id,
+                    'servico_id' => $agendamento->servico_id,
+                    'quantidade' => 1,
+                    'expira_em'  => null, // pacote avulso: sem validade
                 ]);
-                $ordem->save();
+                $ordem->eventos()->create([
+                    'status'  => 'recusado_credito',
+                    'origem'  => 'manual',
+                    'payload' => [
+                        'agendamento_id' => $agendamento->id,
+                        'credito'        => '1 unidade (sem validade)',
+                    ],
+                ]);
+                $credito = true;
+                $motivo  = 'Valor convertido em 1 unidade de crédito';
             }
         }
 
-        $this->notificarClienteRecusa($agendamento, $reembolso);
+        $this->notificarClienteRecusa($agendamento, $credito);
 
         return response()->json([
-            'ok'        => true,
-            'reembolso' => $reembolso['ok'] ? 'automatico' : 'manual',
-            'motivo'    => $reembolso['motivo'] ?? null,
+            'ok'      => true,
+            'credito' => $credito,
+            'motivo'  => $motivo,
         ]);
     }
 
-    private function notificarClienteRecusa(AgendamentoModel $agendamento, array $reembolso): void
+    private function notificarClienteRecusa(AgendamentoModel $agendamento, bool $credito): void
     {
         $user     = $agendamento->user;
         $phoneId  = env('PHONE_NUMBER_ID');
@@ -826,10 +943,13 @@ class AgendaController extends Controller
             return;
         }
 
+        $servico = $agendamento->servico->descricao ?? 'serviço';
+
         $msg = "Olá, " . ucfirst($user->name) . "! Não conseguimos confirmar seu horário na data escolhida. ";
-        $msg .= $reembolso['ok']
-            ? "O reembolso foi solicitado e deve constar em alguns dias úteis."
-            : "O valor será devolvido em até alguns dias úteis.";
+        $msg .= $credito
+            ? "Você ganhou 1 crédito de {$servico} (sem validade) para agendar quando quiser pelo site. "
+              . "Se preferir a devolução do valor, é só combinar com a gente por aqui no WhatsApp."
+            : "Você pode reagendar pelo site ou combinar outro horário com a gente por aqui no WhatsApp.";
 
         try {
             WhatsappController::enviarMsg($phoneId, $user->whatsapp, $msg);
@@ -980,6 +1100,16 @@ class AgendaController extends Controller
             $this->notificarStaffCancelamento($agendamento);
         }
 
+        // Devolve o saldo do plano mensal se a visita foi descontada (desconto agora é
+        // por data via command planos:descontar-visitas, marcado em consumo_plano — não
+        // mais na confirmação). Reverte exatamente os itens consumidos naquela visita.
+        if ($agendamento->plano_mensal_id && !empty($agendamento->consumo_plano)) {
+            $plano = PlanoMensal::with('itens')->find($agendamento->plano_mensal_id);
+            if ($plano) {
+                $plano->restaurarVisita($agendamento->consumo_plano);
+            }
+        }
+
         $agendamento->delete();
         return response()->json(['ok' => true]);
     }
@@ -1061,25 +1191,6 @@ class AgendaController extends Controller
     }
 
     /**
-     * Alterna a marcação de "indicado" do cliente — libera/bloqueia a compra e
-     * renovação de plano mensal pelo site (auto-atendimento). Adm ou func.
-     */
-    public function toggleIndicacao($userId)
-    {
-        $user = auth()->user();
-        if (!$user->adm && !$user->func) {
-            return response()->json(['error' => 'Não autorizado'], 403);
-        }
-
-        $alvo = User::findOrFail($userId);
-        $alvo->indicado    = !$alvo->indicado;
-        $alvo->indicado_em = $alvo->indicado ? now() : null;
-        $alvo->save();
-
-        return response()->json(['ok' => true, 'indicado' => (bool) $alvo->indicado]);
-    }
-
-    /**
      * Pré-reserva as ocorrências do plano mensal (status pago_aguardando) cujo slot do
      * barbeiro já esteja aberto — bloqueia clientes avulsos. NÃO desconta unidade (o
      * desconto é só na confirmação do funcionário). Idempotente (pula conflito/já-existente).
@@ -1101,7 +1212,7 @@ class AgendaController extends Controller
         $agora      = Carbon::now();
         $criados    = 0;
 
-        foreach ($plano->datasOcorrencias() as $data) {
+        foreach ($plano->datasOcorrencias() as $idx => $data) {
             if ($inicio && $data->lt($inicio->copy()->startOfDay())) {
                 continue;
             }
@@ -1115,14 +1226,36 @@ class AgendaController extends Controller
             }
             $fimAg = $inicioAg->copy()->addMinutes($duracaoMin);
 
-            // O barbeiro abriu este slot?
-            $aberto = DisponibilidadeModel::where('funcionario_id', $plano->funcionario_id)
-                ->where('data', $data->toDateString())
-                ->where('hora', $horaStr)
+            // Ao renovar (novo ciclo ativo cobrindo uma semana antes reservada "sem
+            // saldo"), substitui a reserva pela visita paga — ANTES das checagens abaixo.
+            if ($plano->assinatura_id) {
+                AgendamentoModel::where('assinatura_id', $plano->assinatura_id)
+                    ->where('status', AgendamentoModel::STATUS_RESERVA_RENOVACAO)
+                    ->where(function ($q) use ($inicioAg, $fimAg) {
+                        $q->where('data_inicio', '<', $fimAg)->where('data_fim', '>', $inicioAg);
+                    })
+                    ->delete();
+            }
+
+            // Semana (dom..sáb) desta ocorrência: se a assinatura (ou este plano) já
+            // tem uma visita reservada nesta semana (ex.: reagendou a sexta para o
+            // sábado, ou já existe reserva/pré-reserva), não recria — evita duplicidade.
+            $domingo = $data->copy()->startOfWeek(Carbon::SUNDAY);
+            $jaNaSemana = AgendamentoModel::whereBetween('data_inicio', [$domingo, $domingo->copy()->addDays(6)->endOfDay()])
+                ->whereIn('status', AgendamentoModel::OCUPANTES)
+                ->where(function ($q) use ($plano) {
+                    $q->where('plano_mensal_id', $plano->id);
+                    if ($plano->assinatura_id) {
+                        $q->orWhere('assinatura_id', $plano->assinatura_id);
+                    }
+                })
                 ->exists();
-            if (!$aberto) {
+            if ($jaNaSemana) {
                 continue;
             }
+
+            // Plano mensal = slot fixo GARANTIDO: não exige que o barbeiro tenha aberto
+            // o slot explicitamente (o plano é um compromisso fixo do cliente).
 
             // Conflito por barbeiro (ou já existe pré-reserva deste plano)?
             $conflito = AgendamentoModel::where('funcionario_id', $plano->funcionario_id)
@@ -1140,12 +1273,22 @@ class AgendaController extends Controller
                 'servico_id'      => $plano->servico_id,
                 'funcionario_id'  => $plano->funcionario_id,
                 'plano_mensal_id' => $plano->id,
+                'assinatura_id'   => $plano->assinatura_id,
+                'plano_ordem'     => $idx + 1, // posição (1-based) na distribuição
                 'data_inicio'     => $inicioAg,
                 'data_fim'        => $fimAg,
                 'status'          => AgendamentoModel::STATUS_PAGO_AGUARDANDO,
                 'confirmado'      => 0,
             ]);
             $criados++;
+        }
+
+        // Visitas pagas criadas = assinatura com saldo: dispensa o aviso "sem saldo".
+        if ($criados > 0 && $plano->assinatura_id) {
+            Aviso::where('tipo', 'plano_sem_saldo')
+                ->where('user_id', $plano->user_id)
+                ->whereNull('dispensado_at')
+                ->update(['dispensado_at' => now()]);
         }
 
         return $criados;
@@ -1172,19 +1315,129 @@ class AgendaController extends Controller
     }
 
     /**
-     * Desconta 1 unidade do plano ao confirmar um atendimento do plano. Marca consumido
-     * quando todas as unidades forem usadas.
+     * Ao abrir a semana, reserva o slot fixo de assinaturas ativas que estão SEM
+     * ciclo pago cobrindo esta semana (serviços esgotados / aguardando renovação).
+     * O slot fica ocupado (status reserva_renovacao, bloqueia outros clientes) e
+     * cria 1 aviso ao staff por cliente. Ao renovar, materializarPlano substitui a
+     * reserva pela visita paga e dispensa o aviso.
      */
-    private function descontarPlanoMensal($planoId): void
+    public function materializarReservasSemana(array $funcionarioIds, Carbon $domingo): void
     {
-        $plano = PlanoMensal::find($planoId);
-        if (!$plano || $plano->status !== PlanoMensal::STATUS_ATIVO) {
+        if (empty($funcionarioIds)) {
             return;
         }
-        $plano->increment('unidades_usadas');
-        if ((int) $plano->fresh()->unidades_usadas >= (int) $plano->unidades_total) {
-            $plano->status = PlanoMensal::STATUS_CONSUMIDO;
-            $plano->save();
+        $sabado = $domingo->copy()->addDays(6)->endOfDay();
+        $agora  = Carbon::now();
+
+        $assinaturas = \App\Models\AssinaturaMensal::ativo()
+            ->whereIn('funcionario_id', $funcionarioIds)
+            ->whereNotNull('servico_base_id')
+            ->with('servicoBase')
+            ->get();
+
+        foreach ($assinaturas as $a) {
+            // Ocorrência do dia_semana dentro desta semana (dom..sáb).
+            $oc  = null;
+            $cur = $domingo->copy();
+            while ($cur <= $sabado) {
+                if ((int) $cur->format('w') === (int) $a->dia_semana) {
+                    $oc = $cur->copy();
+                    break;
+                }
+                $cur->addDay();
+            }
+            if (!$oc) {
+                continue;
+            }
+
+            $horaStr  = (string) $a->hora;
+            $inicioAg = $oc->copy()->setTimeFromTimeString(substr($horaStr, 0, 5));
+            if ($inicioAg <= $agora) {
+                continue; // só datas futuras
+            }
+
+            // Slot fixo da assinatura = garantido, mesmo sem o barbeiro ter aberto.
+
+            // Já existe visita/reserva desta assinatura nesta semana? -> nada a fazer.
+            $dom = $oc->copy()->startOfWeek(Carbon::SUNDAY);
+            $ja = AgendamentoModel::where('assinatura_id', $a->id)
+                ->whereBetween('data_inicio', [$dom, $dom->copy()->addDays(6)->endOfDay()])
+                ->whereIn('status', AgendamentoModel::OCUPANTES)
+                ->exists();
+            if ($ja) {
+                continue;
+            }
+
+            // Conflito real (outro cliente já no slot)? -> não reserva por cima.
+            $duracao = $this->timeToMinutes((string) ($a->servicoBase->duracao ?? '00:30:00'));
+            $fimAg   = $inicioAg->copy()->addMinutes($duracao);
+            $conflito = AgendamentoModel::where('funcionario_id', $a->funcionario_id)
+                ->where(function ($q) use ($inicioAg, $fimAg) {
+                    $q->where('data_inicio', '<', $fimAg)->where('data_fim', '>', $inicioAg);
+                })
+                ->whereIn('status', AgendamentoModel::OCUPANTES)
+                ->exists();
+            if ($conflito) {
+                continue;
+            }
+
+            $reserva = AgendamentoModel::create([
+                'user_id'        => $a->user_id,
+                'servico_id'     => $a->servico_base_id,
+                'funcionario_id' => $a->funcionario_id,
+                'assinatura_id'  => $a->id,
+                'data_inicio'    => $inicioAg,
+                'data_fim'       => $fimAg,
+                'status'         => AgendamentoModel::STATUS_RESERVA_RENOVACAO,
+                'confirmado'     => 0,
+            ]);
+
+            // 1 aviso ao staff por cliente (enquanto estiver sem saldo).
+            $temAviso = Aviso::where('tipo', 'plano_sem_saldo')
+                ->where('user_id', $a->user_id)
+                ->whereNull('dispensado_at')
+                ->exists();
+            if (!$temAviso) {
+                Aviso::create([
+                    'tipo'       => 'plano_sem_saldo',
+                    'user_id'    => $a->user_id,
+                    'servico_id' => $a->servico_base_id,
+                    'data_antiga'=> $inicioAg,
+                ]);
+
+                // 5ª semana com valores_extra definidos: avisa o CLIENTE no WhatsApp
+                // que o pacote acabou e oferece pagar a visita extra (self-service).
+                $ciclo = $a->cicloAtual();
+                if ($ciclo && !empty($ciclo->valores_extra) && $a->user && $a->user->whatsapp) {
+                    $this->avisarVisitaExtra($a->user, $reserva);
+                }
+            }
+        }
+    }
+
+    /**
+     * Avisa o cliente que seu pacote mensal acabou (5ª semana) e oferece pagar a
+     * visita extra pelo site (self-service). Best-effort — não derruba o fluxo.
+     */
+    private function avisarVisitaExtra(User $cliente, AgendamentoModel $reserva): void
+    {
+        $phoneId = env('PHONE_NUMBER_ID');
+        if (!$phoneId) {
+            return;
+        }
+
+        $nome = ucfirst($cliente->name ?? 'você');
+        $data = Carbon::parse($reserva->data_inicio)->locale('pt_BR')->translatedFormat('d/m \à\s H:i');
+
+        // O autoatendimento de visita-extra foi desativado (pacote mensal é só presencial /
+        // WhatsApp humano). Avisamos o cliente para combinar a visita extra com a barbearia.
+        $msg = "🔔 {$nome}, seu pacote mensal já acabou neste período.\n"
+             . "Seu horário de {$data} segue reservado. Para manter a visita extra, é só falar com a barbearia (presencial ou no nosso WhatsApp) — ela combina com você o serviço (só corte ou corte + barba) e o valor. 😊";
+
+        try {
+            WhatsappController::enviarMsg($phoneId, $cliente->whatsapp, $msg);
+        } catch (\Throwable $e) {
+            \Log::channel('single')->warning('[VISITA-EXTRA] falha ao avisar cliente', ['msg' => $e->getMessage()]);
         }
     }
 
@@ -1200,16 +1453,23 @@ class AgendaController extends Controller
             ->where('excluido', 0)
             ->get();
 
-        $nomePaciente = ucfirst($agendamento->user->name ?? '');
+        $nomeCliente = ucfirst($agendamento->user->name ?? '');
         $data    = Carbon::parse($agendamento->data_inicio)->locale('pt_BR')->translatedFormat('d \d\e F \d\e Y');
         $hora    = Carbon::parse($agendamento->data_inicio)->format('H:i');
         $servico = $agendamento->servico->descricao ?? '';
 
+        // "aviso_cancelamento" nunca existiu neste WABA (herança da clínica) — o
+        // envio falhava em silêncio a cada cancelamento. Reaproveita o template
+        // genérico de aviso ({{1}} = nome comercial, {{2}} = resumo), o mesmo do
+        // AvisoObserver.
+        $nomeComercial = env('WHATSAPP_NOME_COMERCIAL', config('app.name'));
+        $resumo = "{$nomeCliente} cancelou o agendamento de {$data} às {$hora}"
+            . ($servico !== '' ? " ({$servico})" : '') . '.';
+
         foreach ($staffUsers as $staff) {
-            WhatsappController::enviarModelo($phoneId, $staff->whatsapp, 'aviso_cancelamento', [
-                ['type' => 'text', 'text' => $nomePaciente],
-                ['type' => 'text', 'text' => $data . ' às ' . $hora],
-                ['type' => 'text', 'text' => $servico],
+            WhatsappController::enviarModelo($phoneId, $staff->whatsapp, env('WHATSAPP_TEMPLATE_AVISO', 'novo_aviso_sistema_fr'), [
+                ['type' => 'text', 'text' => $nomeComercial],
+                ['type' => 'text', 'text' => $resumo],
             ]);
         }
     }
