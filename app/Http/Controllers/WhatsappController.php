@@ -84,6 +84,13 @@ class WhatsappController extends Controller
         $number  = (string) $request->input('from', '');
         $payload = (string) $request->input('payload', '');
 
+        // Log enxuto do callback (mesmo formato do webhook direto): depura o fluxo
+        // de roteamento por slug sem gravar PII.
+        \Log::channel('single')->info('[WA-INBOUND]', [
+            'from'    => $number,
+            'payload' => $payload,
+        ]);
+
         try {
             if ($payload) {
                 // phoneId vazio: em modo gateway o envio das respostas de confirmação
@@ -101,6 +108,14 @@ class WhatsappController extends Controller
     // entre o webhook direto da Meta (getMsgs) e o callback do gateway (inbound).
     private function rotearButtonPayload(string $phoneId, string $number, string $payload): void
     {
+        // O gateway evtu roteia o clique pelo slug do sistema no payload
+        // ("fr_confirmar_42" → frioli) e o repassa CRU, sem stripar o prefixo.
+        // Aceita com ou sem slug — cobre gateway e webhook direto da Meta.
+        $slug = (string) env('WHATSAPP_SYSTEM_SLUG', '');
+        if ($slug !== '' && str_starts_with($payload, $slug . '_')) {
+            $payload = substr($payload, strlen($slug) + 1);
+        }
+
         // Lembrete único da véspera: o botão confirmar_ faz a confirmação oficial.
         // Mantém compatibilidade com lembretes antigos já enviados com confirmar_pre_
         // (tratados também como confirmação oficial — upgrade do antigo "pré-confirmar").
@@ -471,6 +486,45 @@ class WhatsappController extends Controller
                 self::enviarMsg($phoneId, $s->whatsapp, $msg);
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::channel('single')->warning('[Plano] falha ao avisar staff de reserva', ['msg' => $e->getMessage()]);
+            }
+        }
+    }
+
+    // Aviso ao staff: cliente pediu troca de dia/horário do plano mensal —
+    // fica pendente no dashboard até alguém aprovar/recusar (free-text, mesmo
+    // padrão de avisarStaffReservaSlot; falha silenciosa no log).
+    public static function avisarStaffTrocaPlano(\App\Models\PlanoTroca $troca): void
+    {
+        $phoneId = env('PHONE_NUMBER_ID');
+        if (!$phoneId || !$troca->assinatura) {
+            return;
+        }
+
+        $dias    = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+        $ass     = $troca->assinatura;
+        $nome    = ucfirst($troca->user->name ?? 'cliente');
+        $barbeiro = $ass->funcionario->name ?? '—';
+        $atual   = ($dias[$ass->dia_semana] ?? '') . ' às ' . \Illuminate\Support\Carbon::parse($ass->hora)->format('H:i');
+        $novo    = ($dias[$troca->dia_semana] ?? '') . ' às ' . \Illuminate\Support\Carbon::parse($troca->hora)->format('H:i');
+
+        $msg = "🔄 Pedido de troca de dia do plano mensal!\n\n"
+             . "👤 {$nome}\n"
+             . "💈 {$barbeiro}\n"
+             . "🗓️ De {$atual} para {$novo}\n\n"
+             . "Aprove ou recuse no painel (card “Trocas de dia/horário”).";
+
+        $staff = \App\Models\User::where(function ($q) {
+                $q->where('adm', 1)->orWhere('func', 1);
+            })
+            ->whereNotNull('whatsapp')
+            ->where('excluido', 0)
+            ->get();
+
+        foreach ($staff as $s) {
+            try {
+                self::enviarMsg($phoneId, $s->whatsapp, $msg);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::channel('single')->warning('[PlanoTroca] falha ao avisar staff', ['msg' => $e->getMessage()]);
             }
         }
     }

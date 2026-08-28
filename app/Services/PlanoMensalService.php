@@ -134,6 +134,19 @@ class PlanoMensalService
             throw ValidationException::withMessages(['funcionario_id' => 'Esse horário fixo já tem um ciclo ativo neste período. Escolha outro.']);
         }
 
+        // Slot fixo de OUTRO mensalista: a assinatura ativa dele reserva o dia/hora
+        // SEMANALMENTE — mesmo que uma semana específica pareça livre (remarcação
+        // pontual do dono), outro plano fixo não pode assumir o slot; só avulsos e
+        // remarcações pontuais podem usar a semana vaga. Vale também para ciclo em
+        // vigor de assinatura já cancelada (segue valendo até o fim).
+        $donoSlot = AssinaturaMensal::slotFixoOcupado($funcionario->id, $dia, $hora, $user->id)
+            ?? PlanoMensal::slotOcupadoPorCiclo($funcionario->id, $dia, $hora, $user->id);
+        if ($donoSlot) {
+            throw ValidationException::withMessages([
+                'funcionario_id' => 'Este dia/horário é o slot fixo de ' . ($donoSlot->user->name ?? 'outro cliente') . '. Escolha outro horário.',
+            ]);
+        }
+
         return DB::transaction(function () use ($user, $funcionario, $dia, $hora, $mes, $base, $calc, $args) {
             // Find-or-create da assinatura ativa do slot fixo.
             $assinatura = AssinaturaMensal::where('user_id', $user->id)

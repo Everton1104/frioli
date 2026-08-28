@@ -594,16 +594,25 @@
         </div>
         @endif
 
-        {{-- Planos mensais (horários fixos) --}}
+        {{-- Planos mensais (horários fixos) — só os em vigor; realizados no /historico --}}
         @if(auth()->user()->adm || auth()->user()->func || $planos->isNotEmpty())
         <div class="card shadow my-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-1"
+                 data-bs-toggle="collapse"
+                 data-bs-target="#collapsePlanosMensais"
+                 aria-expanded="false"
+                 style="cursor: pointer">
                 <span>Planos mensais (horários fixos)</span>
-                @if(auth()->user()->adm || auth()->user()->func)
-                <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#modal-add-plano" style="background-color: var(--marrom); color:#1a1410">Vincular plano</button>
-                @endif
+                <span class="d-flex align-items-center gap-2">
+                    @if(auth()->user()->adm || auth()->user()->func)
+                    <a href="{{ route('historico.index') }}" class="small text-decoration-none" onclick="event.stopPropagation()">Histórico de atendimentos →</a>
+                    <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#modal-add-plano" style="background-color: var(--marrom); color:#1a1410" onclick="event.stopPropagation()">Vincular plano</button>
+                    @endif
+                    <span class="card-seta">▾</span>
+                </span>
             </div>
-            <div class="card-body p-0">
+            <div id="collapsePlanosMensais" class="collapse">
+                <div class="card-body p-0">
                 <table class="table table-sm mb-0 align-middle">
                     <thead><tr><th>Cliente</th><th>Itens inclusos</th><th>Barbeiro</th><th>Slot fixo</th><th>Ciclo</th><th>Visitas</th><th>Status</th></tr></thead>
                     <tbody>
@@ -668,6 +677,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
         @endif
@@ -764,6 +774,46 @@
             });
         });
         </script>
+        @endif
+
+        {{-- Trocas de dia/horário de plano mensal pedidas pelo cliente (aguardando decisão) --}}
+        @if((auth()->user()->adm || auth()->user()->func) && $trocasPendentes->isNotEmpty())
+        @php
+            $diasCurta = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+        @endphp
+        <div class="card mb-3 border-warning">
+            <div class="card-header fw-bold" style="background: rgba(255,193,7,.15)">
+                🔄 Trocas de dia/horário — planos mensais ({{ $trocasPendentes->count() }})
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead><tr><th>Cliente</th><th>Barbeiro</th><th>Slot atual</th><th>Novo dia/horário</th><th>Pedido em</th><th class="text-end">Ação</th></tr></thead>
+                    <tbody>
+                        @foreach($trocasPendentes as $t)
+                        <tr data-troca="{{ $t->id }}">
+                            <td>{{ $t->user->name ?? '—' }}<div class="small text-muted">{{ $t->user->whatsapp ?? '' }}</div></td>
+                            <td>{{ $t->assinatura->funcionario->name ?? '—' }}</td>
+                            <td>{{ $diasCurta[$t->assinatura->dia_semana] ?? '' }} às {{ \Carbon\Carbon::parse($t->assinatura->hora)->format('H:i') }}</td>
+                            <td><strong>{{ $t->slotDesc() }}</strong></td>
+                            <td>{{ $t->created_at->format('d/m H:i') }}</td>
+                            <td class="text-end">
+                                <form method="POST" action="{{ route('plano-trocas.aprovar', $t) }}" class="d-inline"
+                                      onsubmit="return confirm('Aprovar a troca para {{ $t->slotDesc() }}? Os agendamentos futuros deste plano serão remarcados para o novo dia/horário.')">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-success">Aprovar</button>
+                                </form>
+                                <form method="POST" action="{{ route('plano-trocas.recusar', $t) }}" class="d-inline"
+                                      onsubmit="return confirm('Recusar esta troca? O cliente verá a recusa no painel dele.')">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Recusar</button>
+                                </form>
+                            </td>
+                        </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
         @endif
 
 
@@ -974,7 +1024,12 @@
 
     {{-- Agendamentos --}}
     <div class="container py-4">
-        <h3 class="mb-4">Agendamentos</h3>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+            <h3 class="mb-0">Agendamentos</h3>
+            @if(auth()->user()->adm || auth()->user()->func)
+            <a href="{{ route('calendario1') }}" class="btn btn-sm ms-2" style="background-color: var(--marrom); color:#1a1410">📅 Ver calendário</a>
+            @endif
+        </div>
 
         @if(auth()->user()->adm)
         <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
@@ -1091,26 +1146,76 @@
         @endif
 
         @if(!auth()->user()->adm && !auth()->user()->func)
-        {{-- Ação primária: agendar corte (pagamento online sempre liberado; no local, se penalizado, vira intenção) --}}
+        @php
+            // Próximos agendamentos reais (confirmados, pagos ou reserva de plano) —
+            // destaque no topo; intenções e recusados ficam de fora (têm card próprio).
+            $proximos = $consultas->flatten()
+                ->filter(fn($c) => $c->data_inicio->isFuture() && in_array($c->status, \App\Models\AgendamentoModel::OCUPANTES))
+                ->sortBy('data_inicio')->values();
+            $proximo = $proximos->first();
+
+            // Situação do pagamento do mês (substitui a antiga tabela "Meus pagamentos"):
+            // cobrança em aberto = pendente (botão pagar); aprovada no mês = em dia.
+            $ordensPendentes = $minhasOrdens->filter(fn($o) => $o->pagavel())->sortBy('id')->values();
+            $ordemPendente   = $ordensPendentes->first();
+            $pagoNoMes       = !$ordemPendente && $minhasOrdens->contains(
+                fn($o) => $o->status === 'approved' && $o->pago_em?->isCurrentMonth()
+            );
+        @endphp
+
+        {{-- Pendência (no-show): aviso — o botão de agendar fica no card abaixo --}}
         @if(auth()->user()->isPenalizado())
-        <div class="alert alert-info d-flex flex-wrap align-items-center gap-3 my-3">
-            <div class="flex-grow-1">
-                <div class="fw-semibold">Você está com uma pendência</div>
-                <div class="small">Você pode agendar normalmente com <strong>pagamento online</strong>. Pedidos para <strong>pagar no local</strong> ficam sujeitos a aprovação do barbeiro.</div>
-            </div>
-            <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
-        </div>
-        @else
-        <div class="card shadow my-3">
-            <div class="card-body d-flex flex-wrap align-items-center gap-3">
-                <div class="flex-grow-1">
-                    <div class="fw-semibold fs-5">Pronto para o próximo corte?</div>
-                    <div class="text-muted small">Escolha o barbeiro, o serviço, o dia e o horário e pague pelo site.</div>
-                </div>
-                <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
-            </div>
+        <div class="alert alert-info my-3">
+            <div class="fw-semibold">Você está com uma pendência</div>
+            <div class="small mb-0">Você pode agendar normalmente com <strong>pagamento online</strong>. Pedidos para <strong>pagar no local</strong> ficam sujeitos a aprovação do barbeiro.</div>
         </div>
         @endif
+
+        {{-- Topo: próximo corte + situação do pagamento do mês + ação primária --}}
+        <div class="card shadow my-3">
+            <div class="card-body p-3">
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <div class="flex-grow-1">
+                        @if($proximo)
+                            <div class="text-uppercase fw-semibold" style="font-size:.72rem; letter-spacing:.08em; color:#b6a98e">Seu próximo corte</div>
+                            <div class="fs-4 fw-bold" style="color:#3ddc84">
+                                {{ $proximo->data_inicio->locale('pt_BR')->translatedFormat('l, d/m') }}
+                                às {{ $proximo->data_inicio->format('H:i') }}
+                            </div>
+                            <div>
+                                {{ $proximo->servico_display }}@if($proximo->funcionario) · {{ $proximo->funcionario->name }}@endif
+                                @if($proximo->status === \App\Models\AgendamentoModel::STATUS_RESERVA_RENOVACAO)
+                                    <span class="badge bg-danger ms-1">renovar plano</span>
+                                @endif
+                            </div>
+                            @if($proximos->count() > 1)
+                                <div class="small text-muted">E mais {{ $proximos->count() - 1 }} agendamento(s) futuro(s) — detalhes em “Agendamentos”, no fim da página.</div>
+                            @endif
+                        @else
+                            <div class="fw-semibold fs-5">Pronto para o próximo corte?</div>
+                            <div class="text-muted small">Escolha o barbeiro, o serviço, o dia e o horário e pague pelo site.</div>
+                        @endif
+                    </div>
+                    <a href="{{ route('agendar.index') }}" class="btn btn-lg px-4" style="background-color: var(--marrom); color:#1a1410">✂️ Agendar corte</a>
+                </div>
+
+                @if($ordemPendente || $pagoNoMes)
+                    <hr class="my-3">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        @if($ordemPendente)
+                            <span class="badge bg-danger p-2">Pagamento do mês pendente</span>
+                            @if($ordensPendentes->count() > 1)
+                                <span class="small text-muted">{{ $ordensPendentes->count() }} cobranças em aberto</span>
+                            @endif
+                            {{-- Botão some sozinho após o pagamento (a ordem deixa de ser pagável) --}}
+                            <a href="{{ route('pagamentos.pagar', $ordemPendente) }}" class="btn btn-sm ms-auto" style="background-color: var(--marrom); color:#1a1410">Pagar agora</a>
+                        @else
+                            <span class="badge bg-success p-2">✓ Pagamento do mês realizado</span>
+                        @endif
+                    </div>
+                @endif
+            </div>
+        </div>
 
         {{-- Intenções de agendamento do cliente (aguardando aprovação do barbeiro) --}}
         @if($minhasIntencoes->isNotEmpty())
@@ -1124,6 +1229,149 @@
                         · {{ \Carbon\Carbon::parse($mi->data_inicio)->format('d/m/Y H:i') }}
                         <span class="badge bg-info text-dark">pagar no local</span>
                         <span class="text-muted">— seu pedido foi enviado. Aguarde a resposta do barbeiro.</span>
+                    </div>
+                @endforeach
+            </div>
+        </div>
+        @endif
+
+        @php
+            // Só o plano do momento (ativo ou aguardando pagamento); ciclos antigos
+            // (consumidos/expirados) ficam de fora para não poluir o painel.
+            $planosAtuais = $meusPlanos->whereIn('status', ['ativo', 'aguardando_pagamento'])->values();
+            // Sem plano atual mas com ciclo expirado e visitas não usadas → Negociar.
+            $planoNegociar = $planosAtuais->isEmpty()
+                ? $meusPlanos->first(fn($p) => $p->status === 'expirado' && $p->restantes() > 0)
+                : null;
+        @endphp
+        @if($planosAtuais->isNotEmpty() || $planoNegociar)
+        <div class="card shadow my-3">
+            <div class="card-header">Meu plano mensal</div>
+            <div class="card-body p-3">
+                @foreach($planosAtuais as $pl)
+                    @php
+                        $diasSlot = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+                        $slot = ($diasSlot[$pl->dia_semana] ?? '') . ' às ' . \Carbon\Carbon::parse($pl->hora)->format('H:i');
+                        // Troca de dia/horário: pendente trava nova solicitação; a última
+                        // resolvida (7 dias) dá o feedback de aprovada/recusada.
+                        $trocaPendente  = $pl->assinatura
+                            ? $minhasTrocas->where('assinatura_id', $pl->assinatura->id)
+                                ->where('status', \App\Models\PlanoTroca::STATUS_PENDENTE)->first()
+                            : null;
+                        $trocaFeedback  = $pl->assinatura
+                            ? $minhasTrocas->where('assinatura_id', $pl->assinatura->id)
+                                ->whereIn('status', [\App\Models\PlanoTroca::STATUS_APROVADA, \App\Models\PlanoTroca::STATUS_RECUSADA])
+                                ->filter(fn($t) => $t->resolvido_em && $t->resolvido_em->gt(now()->subDays(7)))
+                                ->first()
+                            : null;
+                    @endphp
+                    <div class="border rounded px-2 py-2 mb-1">
+                        <div class="d-flex flex-wrap align-items-center gap-1">
+                            <strong>{{ $pl->descricaoItens() }}</strong>
+                            @if($pl->status === 'ativo')
+                                <span class="badge bg-success">Ativo</span>
+                            @else
+                                <span class="badge bg-warning text-dark">Aguardando pagamento</span>
+                            @endif
+                            @if($pl->assinatura && $pl->assinatura->status === 'cancelado')
+                                <span class="badge text-bg-secondary" title="Renovações canceladas — este ciclo segue valendo até o fim">Cancelado — vale até o fim do ciclo</span>
+                            @endif
+                        </div>
+                        <div class="small">
+                            {{ $pl->funcionario->name ?? '—' }} · {{ $slot }}
+                            <span class="badge bg-secondary">{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }} visitas</span>
+                            @if($pl->itens->isNotEmpty())<span class="text-muted">· {{ $pl->restantesPorServico() }}</span>@endif
+                            @if($pl->data_fim)<span class="text-muted">· ciclo até {{ $pl->data_fim->format('d/m/Y') }}</span>@endif
+                        </div>
+                        @if($pl->temDistribuicao() && $pl->status === 'ativo' && $pl->proximaVisitaDesc())
+                            <div class="small text-muted">Próxima visita: {{ $pl->proximaVisitaDesc() }}</div>
+                        @endif
+                        {{-- Troca de dia/horário: só enquanto a assinatura estiver ativa e não
+                             houver outro pedido pendente. Fica pendente até o staff aprovar. --}}
+                        @if($pl->assinatura && $pl->assinatura->status === 'ativo' && !$trocaPendente)
+                            <button type="button" class="btn btn-sm btn-outline-primary mt-2 me-1 btn-trocar-dia"
+                                    data-url="{{ route('assinaturas.trocar-dia', $pl->assinatura) }}"
+                                    data-dia-atual="{{ $pl->assinatura->dia_semana }}">
+                                🔄 Trocar dia/horário
+                            </button>
+                        @endif
+                        @if($trocaPendente)
+                            <div class="small mt-2">
+                                <span class="badge bg-info text-dark">🔄 Troca solicitada: {{ $trocaPendente->slotDesc() }}</span>
+                                <span class="text-muted">— aguardando a barbearia confirmar. Seu plano segue no horário atual até lá.</span>
+                            </div>
+                        @elseif($trocaFeedback)
+                            @if($trocaFeedback->status === \App\Models\PlanoTroca::STATUS_APROVADA)
+                                <div class="small mt-2"><span class="badge bg-success">✓ Troca aprovada</span>
+                                    <span class="text-muted">— plano movido para {{ $trocaFeedback->slotDesc() }} em {{ $trocaFeedback->resolvido_em->format('d/m') }}.</span></div>
+                            @else
+                                <div class="small mt-2"><span class="badge bg-secondary">Troca recusada em {{ $trocaFeedback->resolvido_em->format('d/m') }}</span>
+                                    <span class="text-muted">— fale com a barbearia pelo WhatsApp se quiser entender o motivo.</span></div>
+                            @endif
+                        @endif
+
+                        {{-- Cancelamento pelo próprio cliente: só enquanto a assinatura
+                             (renovação automática) estiver ativa. --}}
+                        @if($pl->assinatura && $pl->assinatura->status === 'ativo')
+                            <button type="button" class="btn btn-sm btn-outline-danger mt-2 btn-cancelar-plano"
+                                    data-url="{{ route('assinaturas.cancelar', $pl->assinatura) }}">
+                                Cancelar plano
+                            </button>
+                        @endif
+                    </div>
+                @endforeach
+                @if($planoNegociar)
+                    <div class="border rounded px-2 py-2 small d-flex flex-wrap align-items-center gap-2">
+                        <span>Seu último plano expirou com <strong>{{ $planoNegociar->restantes() }} visita(s) não usada(s)</strong>.</span>
+                        <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
+                           href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu plano mensal (restam ' . $planoNegociar->restantes() . ' visitas).') }}">Negociar pelo WhatsApp</a>
+                    </div>
+                @endif
+            </div>
+        </div>
+        @endif
+
+        {{-- Meus pacotes avulsos: os que ainda têm unidade sobrando OU têm
+             agendamento futuro (a última unidade já reservada — resta 0, mas o
+             corte marcado aparece). Esgotados sem previsão saem da lista. --}}
+        @php
+            $avulsosAtivos = $meusCreditos->filter(fn($c) => $c->restantes() > 0 || $c->agendamentos->isNotEmpty())->values();
+        @endphp
+        @if($avulsosAtivos->isNotEmpty())
+        <div class="card shadow my-3">
+            <div class="card-header">Meus pacotes avulsos</div>
+            <div class="card-body p-3">
+                @foreach($avulsosAtivos as $cred)
+                    @php
+                        $restam          = $cred->restantes();
+                        $expirado        = $cred->expirado();
+                        $agendado        = $cred->agendamentos->first();
+                    @endphp
+                    <div class="border rounded px-2 py-2 mb-1 small d-flex flex-wrap align-items-center gap-2">
+                        <div class="flex-grow-1">
+                            <strong>{{ $cred->servico->descricao ?? '—' }}</strong>
+                            @if($restam > 0)
+                                <span class="badge bg-success">resta {{ $restam }}</span>
+                            @endif
+                            @if($cred->expira_em)
+                                <span class="text-muted">· expira em {{ $cred->expira_em->format('d/m/Y') }}{{ $expirado ? ' (expirado)' : '' }}</span>
+                            @endif
+                            @if($agendado)
+                                <div class="text-muted">
+                                    ✓ Agendado: {{ $agendado->data_inicio->format('d/m/Y H:i') }}
+                                    @if($agendado->funcionario) · {{ $agendado->funcionario->name }} @endif
+                                </div>
+                            @endif
+                        </div>
+                        @if($expirado)
+                            <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
+                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu pacote de ' . ($cred->servico->descricao ?? '') . ' (expirado).') }}">Negociar</a>
+                        @elseif($restam > 0)
+                            {{-- Com saldo além do já agendado, o botão segue disponível:
+                                 pacote de 2+ unidades pode marcar todas pelo site. --}}
+                            <a href="{{ route('agendar.index', ['pacote' => $cred->id]) }}"
+                               class="btn btn-sm" style="background-color: var(--marrom); color:#1a1410">{{ $agendado ? 'Agendar próxima' : 'Agendar' }}</a>
+                        @endif
                     </div>
                 @endforeach
             </div>
@@ -1157,72 +1405,6 @@
                     <a class="btn btn-sm ms-auto" target="_blank" rel="noopener" style="background-color: var(--marrom); color:#1a1410"
                        href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero saber mais sobre o pacote mensal.') }}">Quero assinar</a>
                 </div>
-            </div>
-        </div>
-        @endif
-
-        {{-- Meus pacotes (validade / Negociar) --}}
-        @if($meusCreditos->isNotEmpty())
-        <div class="card shadow my-3">
-            <div class="card-header">Meus pacotes</div>
-            <div class="card-body p-3">
-                @foreach($meusCreditos as $cred)
-                    @php
-                        $usadas   = $cred->agendamentos_count ?? $cred->usadas();
-                        $restam   = $cred->restantes();
-                        $expirado = $cred->expirado();
-                        $negociar = $cred->negociar();
-                    @endphp
-                    <div class="border rounded px-2 py-1 mb-1 small">
-                        <strong>{{ $cred->servico->descricao ?? '—' }}</strong>
-                        <span class="badge bg-secondary">{{ $usadas }}/{{ $cred->quantidade }} usados</span>
-                        @if($negociar)
-                            <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
-                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu pacote de ' . ($cred->servico->descricao ?? '') . ' (expirado).') }}">Negociar</a>
-                        @else
-                            <span class="badge {{ $restam > 0 ? 'bg-success' : 'bg-danger' }}">resta {{ $restam }}</span>
-                        @endif
-                        @if($cred->expira_em)
-                            <span class="text-muted">· expira em {{ $cred->expira_em->format('d/m/Y') }}{{ $expirado ? ' (expirado)' : '' }}</span>
-                        @endif
-                    </div>
-                @endforeach
-            </div>
-        </div>
-        @endif
-
-        @if($meusPlanos->isNotEmpty())
-        <div class="card shadow my-3">
-            <div class="card-header">Meus planos mensais</div>
-            <div class="card-body p-3">
-                @foreach($meusPlanos as $pl)
-                    @php
-                        $diasSlot = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
-                        $slot = ($diasSlot[$pl->dia_semana] ?? '') . ' ' . \Carbon\Carbon::parse($pl->hora)->format('H:i');
-                    @endphp
-                    <div class="border rounded px-2 py-1 mb-1 small">
-                        <strong>{{ $pl->descricaoItens() }}</strong>
-                        · {{ $pl->funcionario->name ?? '—' }} · {{ $slot }}
-                        <span class="badge bg-secondary">{{ $pl->unidades_usadas }}/{{ $pl->unidades_total }} visitas</span>
-                        @if($pl->itens->isNotEmpty())<span class="text-muted">· {{ $pl->restantesPorServico() }}</span>@endif
-                        @if($pl->temDistribuicao() && $pl->status === 'ativo' && $pl->proximaVisitaDesc())
-                            <div class="text-muted">Próxima visita: {{ $pl->proximaVisitaDesc() }}</div>
-                        @endif
-                        @if($pl->status === 'ativo')
-                            <span class="badge bg-success">Ativo</span>
-                        @elseif($pl->status === 'aguardando_pagamento')
-                            <span class="badge bg-warning text-dark">Aguardando pagamento</span>
-                        @elseif($pl->status === 'consumido')
-                            <span class="badge bg-secondary">Concluído</span>
-                            @if(!empty($pl->valores_extra))
-                                <span class="badge text-bg-warning text-dark">Pacote acabou — visita extra disponível pelo link no WhatsApp</span>
-                            @endif
-                        @elseif($pl->status === 'expirado' && $pl->restantes() > 0)
-                            <a class="badge bg-warning text-dark text-decoration-none" target="_blank" rel="noopener"
-                               href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Quero renegociar meu plano mensal (restam ' . $pl->restantes() . ' visitas).') }}">Negociar {{ $pl->restantes() }}</a>
-                        @endif
-                    </div>
-                @endforeach
             </div>
         </div>
         @endif
@@ -1266,46 +1448,59 @@
                     </div>
                 </div>
             </div>
-        @endif
 
-        @if(!auth()->user()->adm && !auth()->user()->func)
-            {{-- Meus pagamentos (Mercado Pago) --}}
-            <div class="card shadow my-3">
-                <div class="card-header">Meus pagamentos</div>
-                <div class="card-body p-3">
-                    <div class="table-responsive">
-                        <table class="table table-striped table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Descrição</th>
-                                    <th>Valor</th>
-                                    <th>Parcelas</th>
-                                    <th>Status</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @forelse ($minhasOrdens as $ordem)
-                                    @php [$rotulo, $cls] = $ordem->statusBadge(); @endphp
-                                    <tr>
-                                        <td>{{ $ordem->descricao }}</td>
-                                        <td>R$ {{ number_format($ordem->valor, 2, ',', '.') }}</td>
-                                        <td>@if($ordem->max_parcelas > 1) até {{ $ordem->max_parcelas }}x ({{ min((int) $ordem->max_parcelas, \App\Models\OrdemPagamento::MAX_SEM_JUROS) }}x sem juros) @else À vista @endif</td>
-                                        <td><span class="badge {{ $cls }}">{{ $rotulo }}</span></td>
-                                        <td>
-                                            @if ($ordem->pagavel())
-                                                <a href="{{ route('pagamentos.pagar', $ordem) }}" class="btn btn-sm" style="background-color: var(--marrom); color:#fff">Pagar</a>
-                                            @endif
-                                        </td>
-                                    </tr>
-                                @empty
-                                    <tr><td colspan="5" class="text-muted text-center">Você não tem pagamentos no momento.</td></tr>
-                                @endforelse
-                            </tbody>
-                        </table>
+            {{-- Modal: cancelar plano mensal (próprio cliente) — o aviso do acerto via WhatsApp faz parte do ato --}}
+            <x-app.modal id="modal-cancelar-plano" title="Cancelar plano mensal" color="danger"
+                :btn="[['lbl' => 'Confirmar cancelamento', 'color' => 'danger', 'onclick' => '$(\'#form-cancelar-plano\').submit()']]">
+                <form method="POST" id="form-cancelar-plano" action="">
+                    @csrf
+                    <p>Tem certeza que deseja cancelar seu plano mensal?</p>
+                    <ul class="text-muted small mb-3">
+                        <li>As <strong>renovações automáticas param</strong> — nenhuma cobrança nova será gerada.</li>
+                        <li>O ciclo atual <strong>já pago segue valendo</strong> até o fim (suas visitas agendadas continuam).</li>
+                    </ul>
+                    <div class="alert alert-warning small mb-3">
+                        ⚠️ Importante: os valores das <strong>visitas restantes já pagas</strong> devem ser acertados
+                        <strong>diretamente com a barbearia, pelo WhatsApp</strong>.
                     </div>
-                </div>
-            </div>
+                    <a class="btn btn-sm btn-success" target="_blank" rel="noopener"
+                       href="https://wa.me/{{ $whatsappAdmin }}?text={{ urlencode('Olá! Cancelei meu plano mensal pelo site e quero acertar os valores das visitas restantes.') }}">
+                       💬 Falar no WhatsApp para acertar os valores
+                    </a>
+                </form>
+            </x-app.modal>
+
+            {{-- Modal: trocar dia/horário do plano — fica PENDENTE até a barbearia aprovar --}}
+            <x-app.modal id="modal-trocar-dia" title="Trocar dia/horário do plano" color="primary"
+                :btn="[['lbl' => 'Solicitar troca', 'color' => 'primary', 'onclick' => '$(\'#form-trocar-dia\').submit()']]">
+                <form method="POST" id="form-trocar-dia" action="">
+                    @csrf
+                    <p>Escolha o novo dia e horário do seu plano mensal:</p>
+                    <div class="row g-3 mb-2">
+                        <div class="col-7">
+                            <label for="troca_dia_semana" class="form-label">Dia da semana</label>
+                            <select name="dia_semana" id="troca_dia_semana" class="form-select" required>
+                                @foreach (['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'] as $i => $d)
+                                    <option value="{{ $i }}">{{ $d }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-5">
+                            <label for="troca_hora" class="form-label">Horário</label>
+                            <select name="hora" id="troca_hora" class="form-select" required>
+                                @for($m = 7 * 60; $m <= 21 * 60; $m += 15)
+                                    @php $h = sprintf('%02d:%02d', intdiv($m, 60), $m % 60); @endphp
+                                    <option value="{{ $h }}">{{ $h }}</option>
+                                @endfor
+                            </select>
+                        </div>
+                    </div>
+                    <div class="alert alert-info small mb-0">
+                        ℹ️ A troca <strong>não é imediata</strong>: fica pendente e vale somente depois que a
+                        barbearia <strong>confirmar</strong>. Até lá, seu plano segue no dia/horário atual.
+                    </div>
+                </form>
+            </x-app.modal>
         @endif
 
         {{-- Modal: ação sobre consulta (reagendar / excluir / dispensar) --}}
@@ -2700,6 +2895,26 @@
     </script>
     @else
     <script>
+        // Cancelar plano mensal: copia a URL da assinatura do botão clicado para o
+        // form do modal e o abre (a URL vem de route('assinaturas.cancelar') no blade).
+        document.addEventListener('click', function (e) {
+            const btn = e.target.closest('.btn-cancelar-plano');
+            if (!btn) return;
+            document.getElementById('form-cancelar-plano').action = btn.dataset.url;
+            new bootstrap.Modal(document.getElementById('modal-cancelar-plano')).show();
+        });
+
+        // Trocar dia/horário do plano: mesma coisa — URL da assinatura + pré-seleciona
+        // o dia atual para o cliente partir dele.
+        document.addEventListener('click', function (e) {
+            const btn = e.target.closest('.btn-trocar-dia');
+            if (!btn) return;
+            document.getElementById('form-trocar-dia').action = btn.dataset.url;
+            const selDia = document.getElementById('troca_dia_semana');
+            if (selDia && btn.dataset.diaAtual) selDia.value = btn.dataset.diaAtual;
+            new bootstrap.Modal(document.getElementById('modal-trocar-dia')).show();
+        });
+
         function abrirModalAgendamento(agendamentoId, servicoId, servicoNome, funcionarioId) {
             document.getElementById('agendamento_id').value       = agendamentoId ?? '';
             document.getElementById('servico_id').value           = servicoId ?? '';

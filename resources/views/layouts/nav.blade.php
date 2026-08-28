@@ -59,6 +59,16 @@
         <div class="menu-item" onclick="window.location.href='dashboard'">
             Painel
         </div>
+        @if(Auth::user()->adm == 1 || Auth::user()->func == 1)
+        <div class="menu-item" onclick="window.location.href='{{ route('calendario1') }}'">
+            Calendário
+        </div>
+        @endif
+        @if(Auth::user()->adm == 1 || Auth::user()->func == 1)
+        <div class="menu-item" onclick="window.location.href='{{ route('historico.index') }}'">
+            Histórico
+        </div>
+        @endif
         @if(Auth::user()->adm == 1)
         <div class="menu-item" onclick="window.location.href='{{ url('/admin') }}'">
             Painel Admin

@@ -12,10 +12,10 @@ Artisan::command('inspire', function () {
 // Garanta que o cron do servidor esteja configurado:
 //   * * * * * cd /caminho/do/projeto && php artisan schedule:run >> /dev/null 2>&1
 
-// Lembrete da véspera: todo dia às 17h, para todas as consultas do dia seguinte.
+// Lembrete da véspera: todo dia às 19h, para todas as consultas do dia seguinte.
 // (Unificado: um único lembrete que já vale como confirmação oficial.)
 Schedule::command('lembretes:enviar')
-    ->dailyAt('17:00')
+    ->dailyAt('19:00')
     ->withoutOverlapping()
     ->runInBackground();
 

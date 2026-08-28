@@ -7,10 +7,13 @@ use App\Http\Controllers\Agenda\ServicoController;
 use App\Http\Controllers\AssinaturaMensalController;
 use App\Http\Controllers\CreditoServicoController;
 use App\Http\Controllers\FinanceiroController;
+use App\Http\Controllers\HistoricoController;
+use App\Http\Controllers\CalendarioTesteController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PublicRegistrationController;
 use App\Http\Controllers\WhatsappController;
 use App\Http\Controllers\OrdemPagamentoController;
+use App\Http\Controllers\PlanoTrocaController;
 use App\Http\Controllers\InfinitePayWebhookController;
 use App\Http\Controllers\MercadoPagoWebhookController;
 use App\Models\AgendamentoModel;
@@ -128,23 +131,46 @@ Route::get('/dashboard', function () {
             ->orderBy('data_inicio')->get()
         : collect();
 
-    // Pacotes do cliente (tela "Meus pacotes" — validade/Negociar).
+    // Pacotes do cliente (tela "Meus pacotes avulsos" — validade/Negociar). Já
+    // carrega o próximo agendamento futuro de cada pacote (status "agendado").
     $meusCreditos = (!$user->adm && !$user->func)
-        ? \App\Models\CreditoServico::with('servico')->withCount('agendamentos')
+        ? \App\Models\CreditoServico::with('servico')
+            ->with(['agendamentos' => fn($q) => $q->select('id', 'credito_servico_id', 'data_inicio', 'funcionario_id', 'status')
+                ->where('data_inicio', '>', now())
+                ->whereIn('status', \App\Models\AgendamentoModel::OCUPANTES)
+                ->with('funcionario:id,name')
+                ->orderBy('data_inicio')])
+            ->withCount('agendamentos')
             ->where('user_id', $user->id)->orderByDesc('id')->get()
         : collect();
 
     $whatsappAdmin = \App\Models\PageContent::get('contato', 'whatsapp_numero', '5511988245815');
 
-    // Planos mensais (Fase C): staff vê todos; cliente vê os seus.
+    // Planos mensais (Fase C): staff vê os EM VIGOR (ativo/aguardando pagamento);
+    // consumidos/expirados/cancelados saíram da tela principal — o histórico de
+    // cortes realizados vive na tela /historico.
     $planos = ($user->adm || $user->func)
-        ? \App\Models\PlanoMensal::with(['user:id,name', 'servico:id,descricao', 'funcionario:id,name', 'itens.servico:id,descricao', 'assinatura'])->latest()->limit(50)->get()
+        ? \App\Models\PlanoMensal::with(['user:id,name', 'servico:id,descricao', 'funcionario:id,name', 'itens.servico:id,descricao', 'assinatura'])
+            ->whereIn('status', [\App\Models\PlanoMensal::STATUS_ATIVO, \App\Models\PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
+            ->latest()->limit(50)->get()
         : collect();
     $meusPlanos = (!$user->adm && !$user->func)
-        ? \App\Models\PlanoMensal::with(['servico:id,descricao', 'funcionario:id,name', 'itens.servico:id,descricao'])->where('user_id', $user->id)->latest()->get()
+        ? \App\Models\PlanoMensal::with(['servico:id,descricao', 'funcionario:id,name', 'itens.servico:id,descricao', 'assinatura'])->where('user_id', $user->id)->latest()->get()
         : collect();
 
-    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos', 'intencoes', 'minhasIntencoes'));
+    // Trocas de dia/horário do plano mensal: staff vê as pendentes (func só das
+    // suas assinaturas); cliente vê as suas (status no card do plano).
+    $trocasPendentes = ($user->adm || $user->func)
+        ? \App\Models\PlanoTroca::with(['user:id,name,whatsapp', 'assinatura.funcionario:id,name'])
+            ->where('status', \App\Models\PlanoTroca::STATUS_PENDENTE)
+            ->when($user->func, fn($q) => $q->whereHas('assinatura', fn($a) => $a->where('funcionario_id', $user->id)))
+            ->latest()->get()
+        : collect();
+    $minhasTrocas = (!$user->adm && !$user->func)
+        ? \App\Models\PlanoTroca::where('user_id', $user->id)->latest()->get()
+        : collect();
+
+    return view('dashboard', compact('users', 'clientes', 'servicos', 'consultas', 'mesAtual', 'hoje', 'avisos', 'minhasOrdens', 'pendentes', 'barbeiros', 'barbeiroSelecionado', 'penalizados', 'meusCreditos', 'whatsappAdmin', 'planos', 'meusPlanos', 'intencoes', 'minhasIntencoes', 'trocasPendentes', 'minhasTrocas'));
 })->middleware(['auth', 'verified', 'whatsapp.verified'])->name('dashboard');
 
 Route::get('/api/horarios/{data}', [AgendaController::class, 'horarios']);
@@ -168,6 +194,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/clientes/{userId}/creditos',                 [CreditoServicoController::class, 'store'])->name('creditos.store');
     Route::delete('/clientes/{userId}/creditos/{creditoId}',   [CreditoServicoController::class, 'destroy'])->name('creditos.destroy');
     Route::get('/financeiro', [FinanceiroController::class, 'index'])->name('financeiro.index');
+    // Histórico de atendimentos realizados (pacotes consumidos saíram do dashboard).
+    Route::get('/historico', [HistoricoController::class, 'index'])->name('historico.index');
+    // Calendário da equipe (formato "dia" adotado; protótipos 2 e 3 descartados).
+    Route::get('/calendario1', [CalendarioTesteController::class, 'n1'])->name('calendario1');
 });
 Route::resource('agenda', AgendaController::class)->middleware('auth');
 Route::post('agenda/{id}/confirmar', [AgendaController::class, 'confirmar'])->middleware('auth')->name('agenda.confirmar');
@@ -268,6 +298,10 @@ Route::middleware('auth')->group(function () {
     Route::put('/planos-mensais/{plano}',          [OrdemPagamentoController::class, 'updatePlano'])->name('planos.update');
     Route::post('/planos-mensais/{plano}/ativar',  [OrdemPagamentoController::class, 'ativarManual'])->name('planos.ativar');
     Route::post('/assinaturas/{assinatura}/cancelar', [AssinaturaMensalController::class, 'destroy'])->name('assinaturas.cancelar');
+    // Troca de dia/horário do plano: cliente solicita (dono) → staff aprova/recusa.
+    Route::post('/assinaturas/{assinatura}/trocar-dia', [PlanoTrocaController::class, 'store'])->name('assinaturas.trocar-dia');
+    Route::post('/plano-trocas/{troca}/aprovar',        [PlanoTrocaController::class, 'aprovar'])->name('plano-trocas.aprovar');
+    Route::post('/plano-trocas/{troca}/recusar',        [PlanoTrocaController::class, 'recusar'])->name('plano-trocas.recusar');
     Route::post('/ordens-pagamento/{id}/cancelar', [OrdemPagamentoController::class, 'cancelar'])->name('ordens.cancelar');
     Route::delete('/ordens-pagamento/{id}',        [OrdemPagamentoController::class, 'destroy'])->name('ordens.destroy');
     // Paciente — tela de checkout (GET) e criação do link de pagamento (POST, throttle).

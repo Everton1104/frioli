@@ -31,6 +31,13 @@
             Se marcar <strong>pagar no local</strong>, seu pedido fica <strong>aguardando aprovação do barbeiro</strong> — você será avisado quando ele responder.
         </div>
         @endif
+        @if ($pacote)
+        {{-- Modo pacote avulso: serviço já pago, unidade será descontada do pacote --}}
+        <div class="alert alert-success py-2">
+            ✂️ Usando seu <strong>pacote avulso</strong>: <strong>{{ $pacote->servico->descricao }}</strong>
+            — resta(m) <strong>{{ $pacote->restantes() }}</strong> unidade(s). Nada a pagar: escolha só o barbeiro, o dia e o horário.
+        </div>
+        @endif
         <p class="fw-semibold mb-2">1. Barbeiro</p>
         <div class="row g-2 mb-4">
             @foreach($barbeiros as $b)
@@ -46,6 +53,19 @@
         </div>
 
         <p class="fw-semibold mb-2">2. Serviço</p>
+        @if ($pacote)
+        {{-- Serviço vem do pacote (já pago) — mostra fixo em vez da lista pagável --}}
+        <div class="row g-2 mb-4">
+            <div class="col-md-6">
+                <div class="card servico-opt h-100" style="border-color: var(--marrom); background: var(--branco);">
+                    <div class="card-body">
+                        <div class="fw-semibold">{{ $pacote->servico->descricao }}</div>
+                        <div class="small text-secondary">{{ substr($pacote->servico->duracao, 0, 5) }} · incluso no seu pacote</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @else
         <div class="row g-2 mb-4">
             @foreach($servicos as $s)
                 <div class="col-md-6">
@@ -61,33 +81,39 @@
                 </div>
             @endforeach
         </div>
+        @endif
 
         <p class="fw-semibold mb-2">3. Dia</p>
         <input type="date" id="data" class="form-control mb-4" min="{{ date("Y-m-d") }}">
 
         <p class="fw-semibold mb-2">4. Horário</p>
         <div id="slots" class="d-flex flex-wrap gap-2 mb-4">
-            <span class="text-secondary small">Selecione um barbeiro, um serviço e um dia.</span>
+            <span class="text-secondary small">Selecione um barbeiro, {{ $pacote ? '' : 'um serviço e ' }}um dia.</span>
         </div>
 
+        @if (!$pacote)
         <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" id="pagar_no_local" value="1">
             <label class="form-check-label" for="pagar_no_local">Pagar no local (na barbearia, no dia)</label>
         </div>
+        @endif
 
         <form method="POST" action="{{ route("agendar.reservar") }}" id="form-reservar">
             @csrf
             <input type="hidden" name="funcionario_id" id="f-barbeiro" value="{{ old('funcionario_id') }}">
-            <input type="hidden" name="servico_id" id="f-servico" value="{{ old('servico_id') }}">
+            <input type="hidden" name="servico_id" id="f-servico" value="{{ old('servico_id', $pacote?->servico_id) }}">
             <input type="hidden" name="data_inicio" id="f-data" value="{{ old('data_inicio') }}">
             <input type="hidden" name="pagar_no_local" id="f-pagar-local" value="{{ old('pagar_no_local', 0) }}">
+            @if ($pacote)
+            <input type="hidden" name="pacote_id" value="{{ $pacote->id }}">
+            @endif
             @if($recaptchaSiteKey)
             <div class="mb-3">
                 <div class="g-recaptcha" data-sitekey="{{ $recaptchaSiteKey }}"></div>
                 <script src="https://www.google.com/recaptcha/api.js" async defer></script>
             </div>
             @endif
-            <button type="submit" class="btn btn-primary px-4" id="btn-reservar" disabled>Reservar e pagar</button>
+            <button type="submit" class="btn btn-primary px-4" id="btn-reservar" disabled>{{ $pacote ? 'Reservar com meu pacote' : 'Reservar e pagar' }}</button>
             <a href="{{ url("/") }}" class="btn btn-link">Voltar</a>
         </form>
     @endif
@@ -101,7 +127,9 @@
 </style>
 
 <script>
-let barbeiroId = null, servicoId = null, dataSel = null, slotSel = null;
+// Modo pacote avulso: o serviço já vem fixo no hidden #f-servico (unidade do pacote).
+let servicoId = document.getElementById("f-servico").value || null;
+let barbeiroId = null, dataSel = null, slotSel = null;
 
 document.querySelectorAll(".op-barbeiro").forEach(r => r.addEventListener("change", e => {
     barbeiroId = e.target.value;
@@ -118,7 +146,7 @@ const elData = document.getElementById("data");
 elData.addEventListener("change", e => { dataSel = e.target.value; carregarSlots(); });
 
 const chkLocal = document.getElementById("pagar_no_local");
-chkLocal.addEventListener("change", () => {
+if (chkLocal) chkLocal.addEventListener("change", () => {
     document.getElementById("f-pagar-local").value = chkLocal.checked ? 1 : 0;
     document.getElementById("btn-reservar").textContent = chkLocal.checked ? "Reservar (pagar no local)" : "Reservar e pagar";
 });

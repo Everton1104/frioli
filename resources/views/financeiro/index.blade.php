@@ -117,11 +117,13 @@
                                         <td class="text-center text-nowrap">
                                             @if($linha['compareceu'] === true)
                                                 <span class="badge bg-success">✓ Compareceu</span>
+                                            @elseif($linha['compareceu'] === false)
+                                                <span class="badge" style="background:#b45309" title="Cliente faltou, mas a visita foi paga — o repasse ao barbeiro é mantido">✗ Falta · pago</span>
                                             @else
                                                 <button class="btn btn-sm btn-outline-success py-0 px-2" title="Compareceu"
                                                         onclick="marcarPresenca({{ $linha['id'] }}, true)">✓</button>
                                                 <button class="btn btn-sm btn-outline-danger py-0 px-2"
-                                                        title="Não compareceu — sai do repasse e penaliza o cliente"
+                                                        title="Não compareceu — se a visita foi paga o repasse se mantém; pagar-no-local sai do repasse. Penaliza o cliente."
                                                         onclick="marcarPresenca({{ $linha['id'] }}, false)">✗</button>
                                             @endif
                                         </td>
@@ -235,10 +237,11 @@
 
 <script>
     // Marca comparecimento direto da tela de financeiro (reaproveita o endpoint da agenda).
-    // ✓ Compareceu: confirma presença. ✗ Não compareceu: sai do repasse da semana e
-    // penaliza o cliente (mesmo comportamento do botão da agenda).
+    // ✓ Compareceu: confirma presença. ✗ Não compareceu: penaliza o cliente; o
+    // repasse se mantém se a visita foi paga (online/plano/pacote) e só sai se
+    // era "pagar no local" — o recálculo acontece ao recarregar.
     function marcarPresenca(id, compareceu) {
-        if (!compareceu && !confirm('Marcar como NÃO compareceu?\n\nO atendimento sai do repasse desta semana e o cliente fica penalizado (sem agendar até remoção manual).')) {
+        if (!compareceu && !confirm('Marcar como NÃO compareceu?\n\nO cliente fica penalizado (sem agendar até remoção manual). O repasse ao barbeiro se mantém se a visita foi paga; só "pagar no local" sai do repasse.')) {
             return;
         }
         axios.post('{{ url('/') }}/agenda/' + id + '/comparecimento', { compareceu: compareceu })

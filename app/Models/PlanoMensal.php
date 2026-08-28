@@ -122,6 +122,26 @@ class PlanoMensal extends Model
         return $query->where('status', self::STATUS_ATIVO);
     }
 
+    /**
+     * Ciclo EM VIGOR (ativo/aguardando pagamento, data_fim não encerrada) de OUTRO
+     * cliente no mesmo slot (barbeiro + dia + hora). Cobrem o caso da assinatura
+     * já cancelada cujo ciclo pago segue valendo: o slot segue ocupado até o fim.
+     */
+    public static function slotOcupadoPorCiclo(int $funcionarioId, int $diaSemana, string $hora, ?int $ignorarUserId = null): ?self
+    {
+        return static::query()
+            ->whereIn('status', [self::STATUS_ATIVO, self::STATUS_AGUARDANDO_PAGAMENTO])
+            ->where('funcionario_id', $funcionarioId)
+            ->where('dia_semana', $diaSemana)
+            ->where('hora', 'like', substr($hora, 0, 5) . '%')
+            ->where(function ($q) {
+                $q->whereNull('data_fim')->orWhereDate('data_fim', '>=', today());
+            })
+            ->when($ignorarUserId, fn($q) => $q->where('user_id', '!=', $ignorarUserId))
+            ->with('user:id,name')
+            ->first();
+    }
+
     public function restantes(): int
     {
         return max(0, (int) $this->unidades_total - (int) $this->unidades_usadas);

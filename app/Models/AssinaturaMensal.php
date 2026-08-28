@@ -66,6 +66,28 @@ class AssinaturaMensal extends Model
         return $query->where('status', self::STATUS_ATIVO);
     }
 
+    /**
+     * Assinatura ATIVA de OUTRO cliente no mesmo slot fixo (barbeiro + dia + hora),
+     * se houver. O slot fixo é um compromisso SEMANAL recorrente: mesmo que numa
+     * semana específica não exista agendamento (o dono remarcou pontualmente), o
+     * slot segue reservado — outro plano fixo NÃO pode assumi-lo, só avulsos e
+     * remarcações pontuais podem usar a semana vaga.
+     *
+     * $ignorarUserId exclui o próprio cliente (renovação/troca do mesmo dono).
+     */
+    public static function slotFixoOcupado(int $funcionarioId, int $diaSemana, string $hora, ?int $ignorarUserId = null): ?self
+    {
+        $hora = substr($hora, 0, 5); // aceita "HH:MM" ou "HH:MM:SS"
+        return static::query()
+            ->where('status', self::STATUS_ATIVO)
+            ->where('funcionario_id', $funcionarioId)
+            ->where('dia_semana', $diaSemana)
+            ->where('hora', 'like', $hora . '%')
+            ->when($ignorarUserId, fn($q) => $q->where('user_id', '!=', $ignorarUserId))
+            ->with('user:id,name')
+            ->first();
+    }
+
     /** Ciclo mais recente da assinatura (fonte da composição do combo em renovações). */
     public function cicloAtual()
     {

@@ -45,8 +45,25 @@ class FinanceiroController extends Controller
                 ->where('data_inicio', '<=', now())
                 ->whereIn('status', [AgendamentoModel::STATUS_CONFIRMADO, AgendamentoModel::STATUS_PAGO_AGUARDANDO])
                 ->where(function ($q) {
-                    // Exclui faltas marcadas (compareceu=0); NULL conta como ocorrido.
-                    $q->where('compareceu', 1)->orWhereNull('compareceu');
+                    // Presença registrada ou pendente (NULL) conta como ocorrido.
+                    $q->where(function ($qq) {
+                        $qq->where('compareceu', 1)->orWhereNull('compareceu');
+                    })
+                    // Falta marcada (compareceu=0): o cliente é quem furou — se a
+                    // visita foi PAGA, o barbeiro recebe a fatia do mesmo jeito:
+                    // pagamento online aprovado (ordem vinculada), plano mensal ou
+                    // pacote avulso (pré-pagos). Só sai do repasse a falta de
+                    // "pagar no local" (ou sem cobrança vinculada) — ninguém pagou.
+                    ->orWhere(function ($qq) {
+                        $qq->where('compareceu', 0)
+                           ->where(function ($pago) {
+                               $pago->whereNotNull('plano_mensal_id')
+                                    ->orWhereNotNull('credito_servico_id')
+                                    ->orWhereIn('id', OrdemPagamento::select('agendamento_id')
+                                        ->where('status', 'approved')
+                                        ->whereNotNull('agendamento_id'));
+                           });
+                    });
                 })
                 ->with(['servico', 'user', 'planoMensal.itens'])
                 ->orderBy('data_inicio')

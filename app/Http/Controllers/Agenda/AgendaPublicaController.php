@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Agenda;
 use App\Http\Controllers\Controller;
 use App\Models\AgendamentoModel;
 use App\Models\AssinaturaMensal;
+use App\Models\CreditoServico;
 use App\Models\DisponibilidadeModel;
 use App\Models\OrdemPagamento;
 use App\Models\PageContent;
@@ -44,9 +45,23 @@ class AgendaPublicaController extends Controller
 
         $barbeiros = User::barbeiros()->get();
 
+        // Modo pacote avulso (?pacote=ID do CreditoServico): veio do botão
+        // "Agendar" do painel — o serviço é o do pacote (já pago), sem cobrança.
+        $pacote = null;
+        if ($user && request('pacote')) {
+            $pacote = CreditoServico::with('servico')
+                ->where('user_id', $user->id)
+                ->find(request('pacote'));
+            // Só vale com saldo e não expirado; senão cai no fluxo normal.
+            if ($pacote && ($pacote->restantes() <= 0 || $pacote->expirado())) {
+                $pacote = null;
+            }
+        }
+
         return view('agendar.index', [
             'servicos'         => $servicos,
             'barbeiros'        => $barbeiros,
+            'pacote'           => $pacote,
             'penalizado'       => (bool) ($user?->isPenalizado() ?? false),
             'whatsappAdmin'    => PageContent::get('contato', 'whatsapp_numero', '5511988245815'),
             'recaptchaSiteKey' => app(RecaptchaService::class)->siteKey(),
@@ -80,10 +95,28 @@ class AgendaPublicaController extends Controller
             return back()->withErrors(['recaptcha' => 'Confirme que você não é um robô.'])->withInput();
         }
 
-        $servico = $this->servicoDisponivel($request->servico_id);
+        // Resolução do serviço: fluxo normal exige serviço visível com valor online;
+        // no modo pacote avulso vale o serviço do PRÓPRIO pacote (já pago) — pode não
+        // ter valor online (vendido só em pacote), então o filtro é relaxado.
+        $credito = null;
+        if ($request->filled('pacote_id')) {
+            $credito = CreditoServico::with('servico')
+                ->where('user_id', $user->id)
+                ->find($request->pacote_id);
+            $servico = ($credito && (int) $credito->servico_id === (int) $request->servico_id
+                && !$credito->expirado() && $credito->restantes() > 0
+                && $credito->servico && $credito->servico->status == 1 && $credito->servico->excluido == 0)
+                ? $credito->servico
+                : null;
+        } else {
+            $servico = $this->servicoDisponivel($request->servico_id);
+        }
 
         if (!$servico) {
-            return back()->withErrors(['servico_id' => 'Serviço indisponível.'])->withInput();
+            $erro = $request->filled('pacote_id')
+                ? ['pacote' => 'Este pacote não está mais disponível para agendamento.']
+                : ['servico_id' => 'Serviço indisponível.'];
+            return back()->withErrors($erro)->withInput();
         }
 
         // Barbeiro precisa ser agendável (func=1, ativo).
@@ -99,6 +132,27 @@ class AgendaPublicaController extends Controller
 
         if ($erro = $this->validarSlotCliente($servico, $inicio, $fim, $duracao, $intervalo, $funcionario->id)) {
             return back()->withErrors(['data_inicio' => $erro])->withInput();
+        }
+
+        // Pacote avulso: o serviço já está pago (unidade do pacote). Ocupa o slot
+        // como visita pré-paga (mesmo status de plano mensal) e DESCONTA a unidade
+        // via credito_servico_id — sem ordem de pagamento.
+        if ($credito) {
+            AgendamentoModel::create([
+                'user_id'            => $user->id,
+                'servico_id'         => $servico->id,
+                'funcionario_id'     => $funcionario->id,
+                'data_inicio'        => $inicio,
+                'data_fim'           => $fim,
+                'status'             => AgendamentoModel::STATUS_PAGO_AGUARDANDO,
+                'credito_servico_id' => $credito->id,
+                'consome_credito'    => true,
+            ]);
+
+            return redirect()->route('dashboard')->with(
+                'msg',
+                'Agendamento feito usando seu pacote (' . $servico->descricao . ')! Resta(m) ' . $credito->restantes() . ' unidade(s).'
+            );
         }
 
         // Pagar no local: sem ordem de pagamento. Ocupa o slot e fica aguardando o staff

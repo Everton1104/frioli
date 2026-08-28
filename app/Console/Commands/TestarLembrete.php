@@ -59,6 +59,10 @@ class TestarLembrete extends Command
         $saldo   = $agendamento->saldoPacoteTexto();
         $horaMsg = $saldo !== '' ? "{$hora} · {$saldo}" : $hora;
 
+        // Botões com o slug do sistema — o gateway evtu roteia o clique pelo slug.
+        $slug = (string) env('WHATSAPP_SYSTEM_SLUG', '');
+        $pref = $slug !== '' ? $slug . '_' : '';
+
         $this->line('');
         $this->info("Template : {$template}");
         $this->line("Destino  : {$numero}");
@@ -66,7 +70,7 @@ class TestarLembrete extends Command
         if ($saldo !== '') {
             $this->line("Saldo    : {$saldo}");
         }
-        $this->line("Botões   : confirmar_{$agendamento->id} / reagendar_{$agendamento->id}");
+        $this->line("Botões   : {$pref}confirmar_{$agendamento->id} / {$pref}reagendar_{$agendamento->id}");
         $this->line('');
 
         $resultado = WhatsappController::enviarModelo($phoneId, $numero, $template, [
@@ -75,8 +79,8 @@ class TestarLembrete extends Command
             ['type' => 'text', 'text' => $data],
             ['type' => 'text', 'text' => $horaMsg],
         ], 'pt_BR', [
-            'confirmar_' . $agendamento->id,
-            'reagendar_' . $agendamento->id,
+            $pref . 'confirmar_' . $agendamento->id,
+            $pref . 'reagendar_' . $agendamento->id,
         ]);
 
         if (isset($resultado['erro'])) {

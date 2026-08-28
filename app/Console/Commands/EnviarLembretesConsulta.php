@@ -69,8 +69,11 @@ class EnviarLembretesConsulta extends Command
             $saldo   = $agendamento->saldoPacoteTexto();
             $horaMsg = $saldo !== '' ? "{$hora} · {$saldo}" : $hora;
 
-            // Lembrete único da véspera já vale como confirmação oficial (botão confirmar_).
-            $btnConfirmar = 'confirmar_' . $agendamento->id;
+            // Lembrete único da véspera já vale como confirmação oficial (botão
+            // confirmar_). O payload leva o SLUG do sistema ("fr_confirmar_42"):
+            // o gateway evtu roteia o clique de volta para este sistema pelo slug.
+            $slug  = (string) env('WHATSAPP_SYSTEM_SLUG', '');
+            $pref  = $slug !== '' ? $slug . '_' : '';
 
             $resultado = WhatsappController::enviarModelo($phoneId, $user->whatsapp, $template, [
                 ['type' => 'text', 'text' => $nome],
@@ -78,8 +81,8 @@ class EnviarLembretesConsulta extends Command
                 ['type' => 'text', 'text' => $data],
                 ['type' => 'text', 'text' => $horaMsg],
             ], 'pt_BR', [
-                $btnConfirmar,
-                'reagendar_' . $agendamento->id,
+                $pref . 'confirmar_' . $agendamento->id,
+                $pref . 'reagendar_' . $agendamento->id,
             ]);
 
             $erro    = isset($resultado['erro']);
