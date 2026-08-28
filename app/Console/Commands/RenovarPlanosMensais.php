@@ -94,8 +94,12 @@ class RenovarPlanosMensais extends Command
             if ($combo && $combo->temComposicao()) {
                 // Fase 5: renovação LENDO o combo master. A 5ª visita (em mês de 5
                 // semanas) é automática — repete a 1ª visita da distribuição.
+                // Quinzenal: usa a FASE da assinatura (as semanas do cliente).
                 $args['calc'] = PlanoMensal::calcularProximoCicloDeCombo(
-                    $combo, (int) $assinatura->dia_semana, $aPartirDe
+                    $combo,
+                    (int) $assinatura->dia_semana,
+                    $aPartirDe,
+                    $combo->quinzenal ? $assinatura->quinzenal_fase : null
                 );
                 if ($assinatura->dia_renovacao) {
                     $args['dia_renovacao'] = (int) $assinatura->dia_renovacao;

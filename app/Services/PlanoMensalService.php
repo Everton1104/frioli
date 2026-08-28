@@ -70,6 +70,25 @@ class PlanoMensalService
         // (itens, preços com desconto, distribuição e a 5ª visita, que repete a 1ª).
         $comboComposicao = $base->temComposicao();
 
+        // Assinatura JÁ existente neste slot (renovação): define a FASE quinzenal do
+        // cliente — as semanas dele continuam alternadas na mesma paridade.
+        $assinaturaExistente = AssinaturaMensal::where('user_id', $user->id)
+            ->where('funcionario_id', $funcionario->id)
+            ->where('dia_semana', $dia)
+            ->where('hora', $hora)
+            ->where('status', AssinaturaMensal::STATUS_ATIVO)
+            ->orderByDesc('id')
+            ->first();
+        $faseAtual = ($base->quinzenal && $assinaturaExistente) ? $assinaturaExistente->quinzenal_fase : null;
+
+        // Quinzenal SEM fase definida (1º ciclo do cliente no slot): as semanas do
+        // cliente seriam as da próxima ocorrência do dia. Se o slot já tem um
+        // quinzenal nessas semanas, este cliente vira o "complementar" — adota a
+        // fase OPOSTA (começa na semana seguinte), e os dois dividem o horário.
+        if ($base->quinzenal && $faseAtual === null) {
+            $faseAtual = self::faseDisponivelNoSlot($funcionario->id, $dia, $hora, $user->id);
+        }
+
         // Itens inclusos (path legado — combo sem composição definida no cadastro).
         $itens = collect($args['itens'] ?? [])->filter(function ($i) {
             $qtd = is_array($i) ? ($i['quantidade'] ?? $i[1] ?? 0) : ($i->quantidade ?? 0);
@@ -89,7 +108,7 @@ class PlanoMensalService
             // Vinculação LENDO o combo: a partir de HOJE, no mês atual — só as semanas
             // restantes (início no meio do mês = ciclo parcial, valor proporcional).
             $hoje = Carbon::now()->startOfDay();
-            $calc = PlanoMensal::calcularComboDeComboAPartirDe($base, $dia, $hoje);
+            $calc = PlanoMensal::calcularComboDeComboAPartirDe($base, $dia, $hoje, $faseAtual);
             $mes  = $calc['data_inicio'] ? Carbon::parse($calc['data_inicio'])->startOfMonth() : $hoje->copy()->startOfMonth();
             if ($calc['unidades'] < 1 || empty($calc['data_inicio'])) {
                 throw ValidationException::withMessages(['dia_semana' => 'Não há ocorrências suficientes neste mês para o combo.']);
@@ -116,9 +135,15 @@ class PlanoMensalService
         }
 
         // 1 cliente por slot: sobreposição de janela (ou mês, p/ legados sem janela).
+        // QUINZENAL: um ciclo de fase OPOSTA no mesmo slot NÃO conflita — os dois
+        // dividem o horário (cada um nas suas semanas).
         $dI = $calc['data_inicio'];
         $dF = $calc['data_fim'];
-        $existe = PlanoMensal::whereIn('status', [PlanoMensal::STATUS_ATIVO, PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
+        $faseCandidata = $base->quinzenal
+            ? ($faseAtual ?? ($calc['data_inicio'] ? PlanoMensal::faseSemana(Carbon::parse($calc['data_inicio'])) : null))
+            : null;
+
+        $conflitos = PlanoMensal::whereIn('status', [PlanoMensal::STATUS_ATIVO, PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
             ->where('funcionario_id', $funcionario->id)
             ->where('dia_semana', $dia)
             ->where('hora', $hora)
@@ -129,8 +154,13 @@ class PlanoMensalService
                     $qq->whereNull('data_inicio')->where('mes', $mes->toDateString());
                 });
             })
-            ->exists();
-        if ($existe) {
+            ->with(['servico:id,quinzenal', 'assinatura:id,quinzenal_fase'])
+            ->get()
+            ->filter(function ($c) use ($faseCandidata) {
+                $faseOcupante = $c->faseAssinatura();
+                return $faseOcupante === null || $faseCandidata === null || $faseOcupante === $faseCandidata;
+            });
+        if ($conflitos->isNotEmpty()) {
             throw ValidationException::withMessages(['funcionario_id' => 'Esse horário fixo já tem um ciclo ativo neste período. Escolha outro.']);
         }
 
@@ -139,15 +169,16 @@ class PlanoMensalService
         // pontual do dono), outro plano fixo não pode assumir o slot; só avulsos e
         // remarcações pontuais podem usar a semana vaga. Vale também para ciclo em
         // vigor de assinatura já cancelada (segue valendo até o fim).
-        $donoSlot = AssinaturaMensal::slotFixoOcupado($funcionario->id, $dia, $hora, $user->id)
-            ?? PlanoMensal::slotOcupadoPorCiclo($funcionario->id, $dia, $hora, $user->id);
+        // (Quinzenais de fase oposta podem DIVIDIR o slot — regra acima.)
+        $donoSlot = AssinaturaMensal::slotFixoOcupado($funcionario->id, $dia, $hora, $user->id, $faseCandidata)
+            ?? PlanoMensal::slotOcupadoPorCiclo($funcionario->id, $dia, $hora, $user->id, $faseCandidata);
         if ($donoSlot) {
             throw ValidationException::withMessages([
                 'funcionario_id' => 'Este dia/horário é o slot fixo de ' . ($donoSlot->user->name ?? 'outro cliente') . '. Escolha outro horário.',
             ]);
         }
 
-        return DB::transaction(function () use ($user, $funcionario, $dia, $hora, $mes, $base, $calc, $args) {
+        return DB::transaction(function () use ($user, $funcionario, $dia, $hora, $mes, $base, $calc, $args, $faseCandidata) {
             // Find-or-create da assinatura ativa do slot fixo.
             $assinatura = AssinaturaMensal::where('user_id', $user->id)
                 ->where('funcionario_id', $funcionario->id)
@@ -165,12 +196,18 @@ class PlanoMensalService
                     'servico_base_id' => $base->id,
                     'dia_renovacao'   => $args['dia_renovacao'] ?? null,
                     'status'          => AssinaturaMensal::STATUS_ATIVO,
+                    'quinzenal_fase'  => $faseCandidata,
                 ]);
             } else {
-                // Redefine o dia de pagamento (Fase 5).
+                // Redefine o dia de pagamento (Fase 5) e a fase quinzenal (migração
+                // de um combo semanal para quinzenal no mesmo slot).
                 $dirty = false;
                 if (!empty($args['dia_renovacao']) && (int) $assinatura->dia_renovacao !== (int) $args['dia_renovacao']) {
                     $assinatura->dia_renovacao = $args['dia_renovacao'];
+                    $dirty = true;
+                }
+                if ($assinatura->quinzenal_fase !== $faseCandidata) {
+                    $assinatura->quinzenal_fase = $faseCandidata;
                     $dirty = true;
                 }
                 if ($dirty) {
@@ -247,6 +284,58 @@ class PlanoMensalService
     }
 
     /**
+     * Fase quinzenal (0/1) a adotar por um NOVO cliente num slot: a das semanas da
+     * próxima ocorrência do dia — a menos que outro quinzenal já as ocupe, caso em
+     * que retorna a fase OPOSTA (clientes "complementares" dividem o horário).
+     * Retorna null se as DUAS fases já estiverem tomadas (a validação de slot
+     * bloqueia a criação em seguida).
+     */
+    private static function faseDisponivelNoSlot(int $funcionarioId, int $dia, string $hora, int $userId): ?int
+    {
+        // Próxima ocorrência do dia a partir de hoje.
+        $prox = now()->startOfDay();
+        while ((int) $prox->format('w') !== $dia) {
+            $prox->addDay();
+        }
+        $fase = PlanoMensal::faseSemana($prox);
+
+        $ocupadas = collect(); // fases dos OUTROS quinzenais no slot
+
+        // Quinzenais com assinatura ativa no slot (outros clientes).
+        AssinaturaMensal::query()
+            ->where('status', AssinaturaMensal::STATUS_ATIVO)
+            ->where('funcionario_id', $funcionarioId)
+            ->where('dia_semana', $dia)
+            ->where('hora', 'like', substr($hora, 0, 5) . '%')
+            ->where('user_id', '!=', $userId)
+            ->with('servicoBase:id,quinzenal')
+            ->get()
+            ->filter(fn ($a) => $a->servicoBase?->quinzenal && $a->quinzenal_fase !== null)
+            ->each(fn ($a) => $ocupadas[] = (int) $a->quinzenal_fase);
+
+        // Ciclos quinzenais em vigor sem assinatura ativa (assinatura cancelada,
+        // ciclo pago segue valendo até o fim).
+        PlanoMensal::whereIn('status', [PlanoMensal::STATUS_ATIVO, PlanoMensal::STATUS_AGUARDANDO_PAGAMENTO])
+            ->where('funcionario_id', $funcionarioId)
+            ->where('dia_semana', $dia)
+            ->where('hora', 'like', substr($hora, 0, 5) . '%')
+            ->where('user_id', '!=', $userId)
+            ->where(function ($q) {
+                $q->whereNull('data_fim')->orWhereDate('data_fim', '>=', today());
+            })
+            ->with(['servico:id,quinzenal', 'assinatura:id,quinzenal_fase'])
+            ->get()
+            ->filter(fn ($c) => $c->ehQuinzenal())
+            ->each(fn ($c) => $ocupadas[] = (int) $c->faseAssinatura());
+
+        if (!$ocupadas->unique()->contains($fase)) {
+            return $fase; // ninguém nas semanas da próxima ocorrência
+        }
+        $oposta = 1 - $fase;
+        return $ocupadas->unique()->contains($oposta) ? null : $oposta;
+    }
+
+    /**
      * Recalcula os ciclos existentes (ativos/aguardando) de um combo a partir do combo
      * atual — "remove snapshots" (ambiente de testes). Atualiza composição (itens +
      * valor_unitario), distribuição, valor_total e a ordem aberta vinculada. Preserva o
@@ -267,7 +356,9 @@ class PlanoMensalService
         $n = 0;
         foreach ($ciclos as $plano) {
             $mes   = $plano->data_inicio ? Carbon::parse($plano->data_inicio)->startOfMonth() : Carbon::parse($plano->mes)->startOfMonth();
-            $calc  = PlanoMensal::calcularComboDeCombo($combo, $mes, (int) $plano->dia_semana);
+            // Quinzenal: preserva a FASE do cliente (as semanas dele no ciclo).
+            $fase  = $combo->quinzenal ? $plano->faseAssinatura() : null;
+            $calc  = PlanoMensal::calcularComboDeCombo($combo, $mes, (int) $plano->dia_semana, $fase);
             if (empty($calc['data_inicio'])) {
                 continue;
             }

@@ -29,7 +29,7 @@ class AssinaturaMensal extends Model
     protected $fillable = [
         'user_id', 'funcionario_id', 'dia_semana', 'hora', 'dia_renovacao',
         'servico_base_id', 'status', 'cancelado_em', 'observacao', 'legado',
-        'aceita_5', 'servico_extra_id', 'validade_dias',
+        'aceita_5', 'servico_extra_id', 'validade_dias', 'quinzenal_fase',
     ];
 
     protected $casts = [
@@ -39,7 +39,25 @@ class AssinaturaMensal extends Model
         'aceita_5'        => 'boolean',
         'servico_extra_id' => 'integer',
         'validade_dias'   => 'integer',
+        'quinzenal_fase'  => 'integer',
     ];
+
+    /** Assinatura QUINZENAL (slot fixo, visitas a cada 15 dias). */
+    public function ehQuinzenal(): bool
+    {
+        return $this->servicoBase?->quinzenal === true;
+    }
+
+    /** Slot do cliente em texto ("segundas às 09:00" [· quinzenal]). */
+    public function slotDesc(): string
+    {
+        $dias = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+        $txt = $dias[(int) $this->dia_semana] . 's às ' . substr((string) $this->hora, 0, 5);
+        if ($this->ehQuinzenal()) {
+            $txt .= ' (quinzenal)';
+        }
+        return $txt;
+    }
 
     public function user()
     {
@@ -75,17 +93,31 @@ class AssinaturaMensal extends Model
      *
      * $ignorarUserId exclui o próprio cliente (renovação/troca do mesmo dono).
      */
-    public static function slotFixoOcupado(int $funcionarioId, int $diaSemana, string $hora, ?int $ignorarUserId = null): ?self
+    /**
+     * QUINZENAL ($faseCandidata = 0/1): uma assinatura quinzenal de fase OPOSTA
+     * no mesmo slot NÃO bloqueia — os dois clientes dividem o dia/horário, cada
+     * um nas semanas da sua fase. Assinatura semanal (fase null) bloqueia todos;
+     * quinzenal bloqueia semanais e quinzenais de mesma fase.
+     */
+    public static function slotFixoOcupado(int $funcionarioId, int $diaSemana, string $hora, ?int $ignorarUserId = null, ?int $faseCandidata = null): ?self
     {
         $hora = substr($hora, 0, 5); // aceita "HH:MM" ou "HH:MM:SS"
-        return static::query()
+        $candidatos = static::query()
             ->where('status', self::STATUS_ATIVO)
             ->where('funcionario_id', $funcionarioId)
             ->where('dia_semana', $diaSemana)
             ->where('hora', 'like', $hora . '%')
             ->when($ignorarUserId, fn($q) => $q->where('user_id', '!=', $ignorarUserId))
-            ->with('user:id,name')
-            ->first();
+            ->with(['user:id,name', 'servicoBase:id,quinzenal'])
+            ->get();
+
+        foreach ($candidatos as $a) {
+            $faseOcupante = $a->ehQuinzenal() ? $a->quinzenal_fase : null;
+            if ($faseOcupante === null || $faseCandidata === null || (int) $faseOcupante === (int) $faseCandidata) {
+                return $a;
+            }
+        }
+        return null;
     }
 
     /** Ciclo mais recente da assinatura (fonte da composição do combo em renovações). */

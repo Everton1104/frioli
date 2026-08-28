@@ -245,25 +245,36 @@
                 <x-app.select label="Horas" name="duracao_h" required="true" :options="['00'=>'00', '01'=>'01', '02'=>'02']" />
                 <x-app.select label="Minutos" name="duracao_m" required="true" :options="['00'=>'00', '15'=>'15', '30'=>'30', '45'=>'45']" />
                 <x-app.input label="Repasse ao funcionário (%) — parte do valor que vai para o barbeiro" type="number" name="repasse_percent" id="servico_repasse" step="0.01" min="0" max="100" placeholder="Ex.: 50" />
-                <div id="wrap_valor_add">
-                    <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor" id="servico_valor" step="0.01" min="0" placeholder="Ex.: 50.00" />
-                </div>
+                {{-- Tipo primeiro (mensal/quinzenal), valor só se NÃO for mensal —
+                     pacote mensal tem o valor calculado pela composição. --}}
                 <div class="form-check mt-3">
                     <input class="form-check-input" type="checkbox" value="1" name="recorrente" id="servico_recorrente">
                     <label class="form-check-label" for="servico_recorrente">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
                 </div>
                 <div id="add-combo-editor" class="mt-2 ps-3 border-start" style="display:none">
                     <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" value="1" name="quinzenal" id="add_quinzenal">
+                        <label class="form-check-label" for="add_quinzenal">Quinzenal — cliente vem a cada 15 dias (semana sim, semana não)</label>
+                        <div class="form-text ms-4">Nas semanas vazias o horário fica livre para outros clientes; outro quinzenal pode usar o mesmo dia/horário nas semanas alternadas.</div>
+                    </div>
+                    <div class="form-check mt-2 ms-4" id="add_idas_diferentes_wrap" style="display:none">
+                        <input class="form-check-input" type="checkbox" value="1" name="idas_diferentes" id="add_idas_diferentes">
+                        <label class="form-check-label" for="add_idas_diferentes">1ª ida diferente da 2ª (ex.: 1ª só corte, 2ª corte + barba)</label>
+                    </div>
+                    <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" value="1" name="mostrar_clientes" id="add_mostrar_clientes">
                         <label class="form-check-label" for="add_mostrar_clientes">Mostrar este pacote aos clientes (aparece no painel deles, com valores e itens)</label>
                     </div>
                     <div class="form-text fw-semibold mt-1">Composição do pacote (preço com desconto de cada serviço)</div>
                     <div id="add-composicao" class="mb-2"></div>
-                    <div class="form-text fw-semibold">Distribuição das 4 visitas base</div>
+                    <div class="form-text fw-semibold" id="add-dist-label">Distribuição das 4 visitas base</div>
                     <div id="add-distribuicao" class="mb-2"></div>
                     <div class="form-text">Total do pacote: <strong id="add-total">R$ 0,00</strong></div>
                     <input type="hidden" name="composicao" id="add_composicao" value="">
                     <input type="hidden" name="distribuicao" id="add_distribuicao" value="">
+                </div>
+                <div id="wrap_valor_add">
+                    <x-app.input label="Valor (R$) — agendamento online (somente serviço avulso)" type="number" name="valor" id="servico_valor" step="0.01" min="0" placeholder="Ex.: 50.00" />
                 </div>
             </form>
         </x-app.modal>
@@ -279,8 +290,35 @@
                 <x-app.select label="Horas" name="duracao_h_edt_servico" required="true" :options="['00'=>'00', '01'=>'01', '02'=>'02']" />
                 <x-app.select label="Minutos" name="duracao_m_edt_servico" required="true" :options="['00'=>'00', '15'=>'15', '30'=>'30', '45'=>'45']" />
                 <x-app.input label="Repasse ao funcionário (%) — parte do valor que vai para o barbeiro" type="number" name="repasse_percent_edt_servico" id="repasse_percent_edt_servico" step="0.01" min="0" max="100" placeholder="Ex.: 50" />
+                {{-- Tipo primeiro (mensal/quinzenal); valor só se NÃO for mensal. --}}
+                <div class="form-check mt-3">
+                    <input class="form-check-input" type="checkbox" value="1" name="recorrente_edt_servico" id="recorrente_edt_servico">
+                    <label class="form-check-label" for="recorrente_edt_servico">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
+                </div>
+                <div id="edt-combo-editor" class="mt-2 ps-3 border-start" style="display:none">
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" value="1" name="quinzenal_edt_servico" id="edt_quinzenal">
+                        <label class="form-check-label" for="edt_quinzenal">Quinzenal — cliente vem a cada 15 dias (semana sim, semana não)</label>
+                        <div class="form-text ms-4">Nas semanas vazias o horário fica livre para outros clientes; outro quinzenal pode usar o mesmo dia/horário nas semanas alternadas.</div>
+                    </div>
+                    <div class="form-check mt-2 ms-4" id="edt_idas_diferentes_wrap" style="display:none">
+                        <input class="form-check-input" type="checkbox" value="1" name="idas_diferentes_edt_servico" id="edt_idas_diferentes">
+                        <label class="form-check-label" for="edt_idas_diferentes">1ª ida diferente da 2ª (ex.: 1ª só corte, 2ª corte + barba)</label>
+                    </div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" value="1" name="mostrar_clientes_edt_servico" id="edt_mostrar_clientes">
+                        <label class="form-check-label" for="edt_mostrar_clientes">Mostrar este pacote aos clientes (aparece no painel deles, com valores e itens)</label>
+                    </div>
+                    <div class="form-text fw-semibold mt-1">Composição do pacote (preço com desconto de cada serviço)</div>
+                    <div id="edt-composicao" class="mb-2"></div>
+                    <div class="form-text fw-semibold" id="edt-dist-label">Distribuição das 4 visitas base</div>
+                    <div id="edt-distribuicao" class="mb-2"></div>
+                    <div class="form-text">Total do pacote: <strong id="edt-total">R$ 0,00</strong></div>
+                    <input type="hidden" name="composicao_edt_servico" id="edt_composicao" value="">
+                    <input type="hidden" name="distribuicao_edt_servico" id="edt_distribuicao" value="">
+                </div>
                 <div id="wrap_valor_edt">
-                    <x-app.input label="Valor (R$) — agendamento online" type="number" name="valor_edt_servico" id="valor_edt_servico" step="0.01" min="0" placeholder="Ex.: 50.00" />
+                    <x-app.input label="Valor (R$) — agendamento online (somente serviço avulso)" type="number" name="valor_edt_servico" id="valor_edt_servico" step="0.01" min="0" placeholder="Ex.: 50.00" />
                 </div>
                 <x-app.radio name="status_servico"
                     :options="[
@@ -288,23 +326,6 @@
                         '1' => 'ATIVO'
                     ]"
                 />
-                <div class="form-check mt-3">
-                    <input class="form-check-input" type="checkbox" value="1" name="recorrente_edt_servico" id="recorrente_edt_servico">
-                    <label class="form-check-label" for="recorrente_edt_servico">Serviço mensal (pacote de cortes semanais fixos — não agendável individualmente)</label>
-                </div>
-                <div id="edt-combo-editor" class="mt-2 ps-3 border-start" style="display:none">
-                    <div class="form-check mt-2">
-                        <input class="form-check-input" type="checkbox" value="1" name="mostrar_clientes_edt_servico" id="edt_mostrar_clientes">
-                        <label class="form-check-label" for="edt_mostrar_clientes">Mostrar este pacote aos clientes (aparece no painel deles, com valores e itens)</label>
-                    </div>
-                    <div class="form-text fw-semibold mt-1">Composição do pacote (preço com desconto de cada serviço)</div>
-                    <div id="edt-composicao" class="mb-2"></div>
-                    <div class="form-text fw-semibold">Distribuição das 4 visitas base</div>
-                    <div id="edt-distribuicao" class="mb-2"></div>
-                    <div class="form-text">Total do pacote: <strong id="edt-total">R$ 0,00</strong></div>
-                    <input type="hidden" name="composicao_edt_servico" id="edt_composicao" value="">
-                    <input type="hidden" name="distribuicao_edt_servico" id="edt_distribuicao" value="">
-                </div>
             </form>
         </x-app.modal>
         @php
@@ -315,6 +336,9 @@
             // Editor de composição + distribuição do combo mensal (Fase 5).
             const SERVICOS_COMUNS = @json($servicosComunsJs);
             // prefix: 'add' | 'edt'. dadosIniciais: {composicao:{id:preco}, distribuicao:[[ids],...]} ou null.
+            // Editor por prefix (p/ re-render quando o tipo quinzenal liga/desliga).
+            const COMBO_EDITORS = {};
+
             function initComboEditor(prefix, dadosIniciais) {
                 const compBox = document.getElementById(prefix + '-composicao');
                 const distBox = document.getElementById(prefix + '-distribuicao');
@@ -323,6 +347,14 @@
                 const inDist = document.getElementById(prefix + '_distribuicao');
                 if (!compBox) return;
                 const ini = dadosIniciais || { composicao: {}, distribuicao: [[],[],[],[]] };
+                // Quinzenal: idas iguais → sem seletor (0 posições visíveis, a
+                // distribuição é gerada); "idas diferentes" → 2 posições (Ida 1/2).
+                // Semanal: as 4 semanas do mês.
+                const chkQuinzenal = document.getElementById(prefix + '_quinzenal');
+                const chkIdas = document.getElementById(prefix + '_idas_diferentes');
+                const nVisitas = () => !chkQuinzenal || !chkQuinzenal.checked
+                    ? 4
+                    : (chkIdas && chkIdas.checked ? 2 : 0);
 
                 compBox.innerHTML = SERVICOS_COMUNS.map(s =>
                     '<div class="d-flex align-items-center justify-content-between mb-1"><span>' + s.nome + '</span>' +
@@ -342,7 +374,15 @@
                 function renderDistribuicao() {
                     const precos = precosPreenchidos();
                     const svcs = Object.keys(precos);
-                    distBox.innerHTML = [1,2,3,4].map((n, i) => {
+                    // Quinzenal com idas iguais: sem seletor — cada ida inclui todos
+                    // os serviços com preço definido (a distribuição é gerada).
+                    const quinzenal = chkQuinzenal && chkQuinzenal.checked;
+                    const mostrar = !quinzenal || (chkIdas && chkIdas.checked);
+                    distBox.style.display = mostrar ? '' : 'none';
+                    if (!mostrar) { distBox.innerHTML = ''; return; }
+                    const rotulo = quinzenal ? 'Ida' : 'Visita';
+                    distBox.innerHTML = Array.from({ length: nVisitas() }, (_, i) => {
+                        const n = i + 1;
                         const marcados = new Set((ini.distribuicao[i] || []).map(x => String(x)));
                         const checks = svcs.length ? svcs.map(sid => {
                             const nome = (SERVICOS_COMUNS.find(s => String(s.id) === String(sid)) || {}).nome || sid;
@@ -350,7 +390,7 @@
                                 '<input class="form-check-input dist-chk" type="checkbox" value="' + sid + '" data-sem="' + i + '" ' + (marcados.has(String(sid)) ? 'checked' : '') + ' id="' + prefix + '_d' + i + '_' + sid + '">' +
                                 '<label class="form-check-label" for="' + prefix + '_d' + i + '_' + sid + '">' + nome + '</label></div>';
                         }).join('') : '<span class="text-muted small">Preencha um preço acima.</span>';
-                        return '<div class="d-flex flex-wrap align-items-center gap-2 mb-1"><span class="badge text-bg-secondary" style="min-width:60px">Visita ' + n + '</span> ' + checks + '</div>';
+                        return '<div class="d-flex flex-wrap align-items-center gap-2 mb-1"><span class="badge text-bg-secondary" style="min-width:60px">' + rotulo + ' ' + n + '</span> ' + checks + '</div>';
                     }).join('');
                     distBox.querySelectorAll('.dist-chk').forEach(el => el.addEventListener('change', atualizar));
                 }
@@ -358,17 +398,26 @@
                 function atualizar() {
                     const precos = precosPreenchidos();
                     inComp.value = JSON.stringify(precos);
-                    const dist = [[],[],[],[]];
-                    distBox.querySelectorAll('.dist-chk:checked').forEach(el => { dist[Number(el.dataset.sem)].push(Number(el.value)); });
-                    inDist.value = JSON.stringify(dist);
-                    let total = 0;
+                    let dist, total = 0;
+                    if (chkQuinzenal && chkQuinzenal.checked && !(chkIdas && chkIdas.checked)) {
+                        // Quinzenal idas iguais: 2 idas/mês com todos os serviços da
+                        // composição (mesma regra do backend — distribuicaoQuinzenal).
+                        dist = [Object.keys(precos).map(Number), Object.keys(precos).map(Number)];
+                    } else {
+                        dist = Array.from({ length: Math.max(1, nVisitas()) }, () => []);
+                        distBox.querySelectorAll('.dist-chk:checked').forEach(el => { dist[Number(el.dataset.sem)].push(Number(el.value)); });
+                    }
                     dist.forEach(v => v.forEach(sid => { total += precos[sid] || 0; }));
-                    outTotal.textContent = 'R$ ' + total.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+                    outTotal.textContent = 'R$ ' + total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })
+                        + (chkQuinzenal && chkQuinzenal.checked ? ' (2 idas/mês)' : '');
+                    inDist.value = JSON.stringify(dist);
+                    ini.distribuicao = dist; // preserva os checks ao re-renderizar
                 }
 
                 compBox.querySelectorAll('.comp-preco').forEach(el => el.addEventListener('input', () => { renderDistribuicao(); atualizar(); }));
                 renderDistribuicao();
                 atualizar();
+                COMBO_EDITORS[prefix] = { render: () => { renderDistribuicao(); atualizar(); } };
             }
 
             (function () {
@@ -392,6 +441,33 @@
                         if (edtChk.checked && !edtEditor.dataset.inited) { initComboEditor('edt', null); edtEditor.dataset.inited = '1'; }
                     });
                 }
+
+                // Rótulo da distribuição + nº de visitas do editor: no quinzenal a
+                // distribuição é automática (oculta), exceto com "idas diferentes".
+                // O toggle re-renderiza o editor com o novo tamanho.
+                const ligaRotuloQuinzenal = (chkId, labelId, prefix) => {
+                    const chk = document.getElementById(chkId), label = document.getElementById(labelId);
+                    const idasWrap = document.getElementById(prefix + '_idas_diferentes_wrap');
+                    const idasChk = document.getElementById(prefix + '_idas_diferentes');
+                    if (!chk || !label) return;
+                    const aplicar = () => {
+                        label.textContent = chk.checked && !(idasChk && idasChk.checked)
+                            ? 'Cada ida dele inclui TODOS os serviços com preço acima — o ciclo é montado pelo sistema (2 idas/mês; em meses de 5 semanas entra 1 ida extra, como nos mensais)'
+                            : (chk.checked ? 'Monte cada ida dele (a 1ª e a 2ª do mês)' : 'Distribuição das 4 visitas base');
+                        if (idasWrap) idasWrap.style.display = chk.checked ? '' : 'none';
+                    };
+                    chk.addEventListener('change', () => {
+                        aplicar();
+                        if (COMBO_EDITORS[prefix]) COMBO_EDITORS[prefix].render();
+                    });
+                    if (idasChk) idasChk.addEventListener('change', () => {
+                        aplicar();
+                        if (COMBO_EDITORS[prefix]) COMBO_EDITORS[prefix].render();
+                    });
+                    aplicar();
+                };
+                ligaRotuloQuinzenal('add_quinzenal', 'add-dist-label', 'add');
+                ligaRotuloQuinzenal('edt_quinzenal', 'edt-dist-label', 'edt');
             })();
         </script>
 
@@ -442,11 +518,14 @@
                                         </td>
                                         <td>{{ $servico->descricao }}
                                             @if($servico->recorrente)
-                                                <span class="badge bg-secondary ms-1">Mensal</span>
+                                                <span class="badge bg-primary ms-1">📅 Mensal</span>
+                                                @if($servico->quinzenal)<span class="badge ms-1" style="background:#6f42c6" title="Cliente vem a cada 15 dias — semanas vazias ficam livres">🔁 Quinzenal</span>@endif
                                                 <span class="badge ms-1 {{ $servico->visivel_cliente ? 'bg-success' : 'bg-warning text-dark' }}"
                                                       title="{{ $servico->visivel_cliente ? 'Aparece no painel dos clientes (valores e itens)' : 'Oculto dos clientes — marque "Mostrar aos clientes" no editor' }}">
                                                     {{ $servico->visivel_cliente ? '👁 visível p/ cliente' : '🚫 oculto' }}
                                                 </span>
+                                            @else
+                                                <span class="badge ms-1" style="background:#6f42c6">✂️ Avulso</span>
                                             @endif
                                         </td>
                                         <td>{{ $servico->duracao }}</td>
@@ -625,7 +704,7 @@
                                 @if($pl->recorrente) <span class="badge text-bg-info" title="Renovação automática mensal (link)">🔁 Recorrente</span>@endif
                             </td>
                             <td>{{ $pl->funcionario->name ?? '—' }}</td>
-                            <td>{{ ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][$pl->dia_semana] ?? '' }} {{ \Carbon\Carbon::parse($pl->hora)->format('H:i') }}</td>
+                            <td>{{ ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][$pl->dia_semana] ?? '' }} {{ \Carbon\Carbon::parse($pl->hora)->format('H:i') }}@if($pl->servico->quinzenal) <span class="badge" style="background:#6f42c6">quinzenal</span>@endif</td>
                             <td>
                                 @if($pl->data_inicio && $pl->data_fim)
                                     {{ \Carbon\Carbon::parse($pl->data_inicio)->format('d/m') }} → {{ \Carbon\Carbon::parse($pl->data_fim)->format('d/m/Y') }}
@@ -883,8 +962,8 @@
                 <div id="plano_combo_preview" class="mt-3 border rounded p-2" style="display:none">
                     <div class="form-text fw-semibold">Composição do pacote (herdada do combo)</div>
                     <div id="plano_combo_itens" class="small"></div>
-                    <div class="form-text mt-2">Valor do pacote (4 visitas): <strong id="plano_valor_total">—</strong></div>
-                    <div class="form-text">Em meses de 5 semanas, a 5ª visita é automática (repete a 1ª).</div>
+                    <div class="form-text mt-2"><span id="plano_valor_lbl">Valor do pacote (4 visitas)</span>: <strong id="plano_valor_total">—</strong></div>
+                    <div class="form-text" id="plano_extra_lbl">Em meses de 5 semanas, a 5ª visita é automática (repete a 1ª).</div>
                 </div>
                 <div id="plano_combo_alert" class="alert alert-warning py-2 mt-3 small" style="display:none">
                     Este combo ainda não tem composição cadastrada. Edite o serviço mensal para definir serviços inclusos, preços com desconto e distribuição.
@@ -906,6 +985,8 @@
                 const alerta  = document.getElementById('plano_combo_alert');
                 const itens   = document.getElementById('plano_combo_itens');
                 const outV    = document.getElementById('plano_valor_total');
+                const lblV    = document.getElementById('plano_valor_lbl');
+                const lblE    = document.getElementById('plano_extra_lbl');
                 if (!base) return;
 
                 async function carregar() {
@@ -920,8 +1001,15 @@
                         const comps = Object.entries(d.composicao).map(([sid, p]) =>
                             '<div>' + (nomes[sid] || ('serviço ' + sid)) + ': <strong>R$ ' + Number(p).toLocaleString('pt-BR', {minimumFractionDigits: 2}) + '</strong></div>'
                         ).join('');
-                        itens.innerHTML = comps + '<div class="text-muted">Visitas: ' + d.distribuicao.map(v => v.length + ' svc').join(' · ') + '</div>';
+                        itens.innerHTML = comps + '<div class="text-muted">' + (d.quinzenal ? 'Idas' : 'Visitas') + ': ' + d.distribuicao.map(v => v.length + ' svc').join(' · ') + '</div>';
                         outV.textContent = 'R$ ' + Number(d.total_base).toLocaleString('pt-BR', {minimumFractionDigits: 2});
+                        if (d.quinzenal) {
+                            lblV.textContent = 'Valor do pacote (2 idas/mês)';
+                            lblE.textContent = 'Em meses com 3 semanas da fase dele, a 3ª ida é automática (repete a 1ª). Nas semanas livres o horário fica disponível.';
+                        } else {
+                            lblV.textContent = 'Valor do pacote (4 visitas)';
+                            lblE.textContent = 'Em meses de 5 semanas, a 5ª visita é automática (repete a 1ª).';
+                        }
                         preview.style.display = '';
                     } catch (e) { alerta.style.display = ''; }
                 }
@@ -974,7 +1062,7 @@
                         <label class="form-label small mb-1">Dia de pagamento (renovação)</label>
                         <select name="dia_renovacao" id="edit_dia_renovacao" class="form-select form-select-sm" required></select>
                     </div>
-                    <div class="col form-text small align-self-end">5ª visita automática (repete a 1ª em meses de 5 semanas)</div>
+                    <div class="col form-text small align-self-end">Visita extra automática quando o mês tem semanas extras (repete a 1ª)</div>
                 </div>
             </form>
         </x-app.modal>
@@ -1251,7 +1339,8 @@
                 @foreach($planosAtuais as $pl)
                     @php
                         $diasSlot = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
-                        $slot = ($diasSlot[$pl->dia_semana] ?? '') . ' às ' . \Carbon\Carbon::parse($pl->hora)->format('H:i');
+                        $slot = ($diasSlot[$pl->dia_semana] ?? '') . ' às ' . \Carbon\Carbon::parse($pl->hora)->format('H:i')
+                            . ($pl->servico->quinzenal ? ' (quinzenal — semana sim, semana não)' : '');
                         // Troca de dia/horário: pendente trava nova solicitação; a última
                         // resolvida (7 dias) dá o feedback de aprovada/recusada.
                         $trocaPendente  = $pl->assinatura
@@ -1624,7 +1713,9 @@
                                                         @else
                                                             <span class="badge bg-warning text-dark mb-1">Aguardando confirmação</span>
                                                         @endif
-                                                        @if($consulta->plano_mensal_id)<span class="badge bg-primary mb-1 ms-1">📅 Mensal</span>@endif
+                                                        @if($consulta->plano_mensal_id)<span class="badge bg-primary mb-1 ms-1">📅 Mensal</span>
+                                                        @elseif($consulta->credito_servico_id)<span class="badge mb-1 ms-1" style="background:#6f42c6">🧾 Pacote avulso</span>
+                                                        @else<span class="badge mb-1 ms-1" style="background:#6f42c6">✂️ Avulso</span>@endif
                                                         @if($consulta->status === 'reserva_renovacao')<span class="badge bg-danger mb-1 ms-1">⚠️ Sem saldo — renovar</span>@endif
                                                         <br>
                                                         <strong>Cliente:</strong> {{ $consulta->user->name }}
@@ -2429,6 +2520,12 @@
             $(`#status_servico_${servico.status}`).prop('checked', true);
 
             $('#recorrente_edt_servico').prop('checked', !!servico.recorrente);
+            $('#edt_quinzenal').prop('checked', !!servico.recorrente && !!servico.quinzenal);
+            // Quinzenal com 1ª ida ≠ 2ª: abre o editor de idas automaticamente.
+            const idasDiferentes = !!servico.quinzenal
+                && Array.isArray(servico.distribuicao) && servico.distribuicao.length >= 2
+                && JSON.stringify(servico.distribuicao[0] ?? []) !== JSON.stringify(servico.distribuicao[1] ?? []);
+            $('#edt_idas_diferentes').prop('checked', idasDiferentes);
             $('#edt_mostrar_clientes').prop('checked', !!servico.recorrente && !!servico.visivel_cliente);
 
             // Combo mensal: esconde o campo "valor" (calculado pela soma da composição).
@@ -2441,6 +2538,8 @@
             if (servico.recorrente) {
                 edtEditor.style.display = '';
                 initComboEditor('edt', { composicao: servico.composicao || {}, distribuicao: servico.distribuicao || [[],[],[],[]] });
+                // Atualiza rótulo/tamanho (quinzenal) depois do editor inicializado.
+                $('#edt_quinzenal').trigger('change');
             } else {
                 edtEditor.style.display = 'none';
             }

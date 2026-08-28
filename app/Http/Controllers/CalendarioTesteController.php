@@ -63,6 +63,7 @@ class CalendarioTesteController extends Controller
             $badges = [];
             if ($a->confirmado) $badges[] = '✓';
             if ($a->plano_mensal_id) $badges[] = '📅';
+            else $badges[] = '✂️'; // avulso — todo atendimento que não é do plano
             if ($a->credito_servico_id) $badges[] = '🧾';
             if ($a->pagar_no_local) $badges[] = '💵';
             if ($a->especial) $badges[] = '⚡';

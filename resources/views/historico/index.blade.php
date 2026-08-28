@@ -142,8 +142,9 @@
                                                     </div>
                                                 </div>
                                                 <div class="flex-grow-1">
-                                                    @if($a->plano_mensal_id)<span class="badge bg-primary mb-1">📅 Mensal</span>@endif
-                                                    @if($a->credito_servico_id && !$a->plano_mensal_id)<span class="badge mb-1" style="background:#6f42c6">🧾 Pacote avulso</span>@endif
+                                                    @if($a->plano_mensal_id)<span class="badge bg-primary mb-1">📅 Mensal</span>
+                                                    @elseif($a->credito_servico_id)<span class="badge mb-1" style="background:#6f42c6">🧾 Pacote avulso</span>
+                                                    @else<span class="badge mb-1" style="background:#6f42c6">✂️ Avulso</span>@endif
                                                     @if($a->compareceu === true)<span class="badge bg-success mb-1">✓ Compareceu</span>
                                                     @elseif($a->compareceu === false)<span class="badge bg-danger mb-1">✗ Não compareceu</span>@endif
                                                     @if($a->pagar_no_local)<span class="badge bg-info text-dark mb-1">Pagar no local</span>@endif

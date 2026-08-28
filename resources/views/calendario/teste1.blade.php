@@ -82,6 +82,7 @@
             <span><span class="d-inline-block" style="width:10px;height:10px;background:#28a74588;border-radius:2px"></span> confirmado</span>
             <span><span class="d-inline-block" style="width:10px;height:10px;background:#ffc10788;border-radius:2px"></span> aguardando</span>
             <span><span class="d-inline-block" style="width:10px;height:10px;background:#0d6efd;border-radius:2px"></span> mensal</span>
+            <span>✂️ avulso · 🧾 pacote</span>
             <span><span class="d-inline-block" style="width:10px;height:10px;background:#dc354588;border-radius:2px"></span> reserva/especial</span>
             <span class="text-muted">| verde claro = horário aberto</span>
         </div>

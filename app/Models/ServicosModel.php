@@ -7,9 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 class ServicosModel extends Model
 {
     protected $table = 'servicos';
-    protected $fillable = ['descricao', 'duracao', 'status', 'excluido', 'visivel_cliente', 'recorrente', 'valor', 'repasse_percent', 'user_id', 'composicao', 'distribuicao'];
+    protected $fillable = ['descricao', 'duracao', 'status', 'excluido', 'visivel_cliente', 'recorrente', 'valor', 'repasse_percent', 'user_id', 'composicao', 'distribuicao', 'quinzenal'];
 
-    protected $casts = ['recorrente' => 'boolean', 'valor' => 'float', 'repasse_percent' => 'float', 'composicao' => 'array', 'distribuicao' => 'array'];
+    protected $casts = ['recorrente' => 'boolean', 'quinzenal' => 'boolean', 'valor' => 'float', 'repasse_percent' => 'float', 'composicao' => 'array', 'distribuicao' => 'array'];
 
     /** Percentual (0–100) de repasse ao funcionário sobre o valor do serviço (0 se não definido). */
     public function repassePercent(): float

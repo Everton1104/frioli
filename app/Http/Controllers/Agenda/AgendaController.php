@@ -1350,6 +1350,15 @@ class AgendaController extends Controller
                 continue;
             }
 
+            // QUINZENAL: nas semanas que NÃO são do cliente o slot fica LIVRE —
+            // disponível para avulsos ou para o quinzenal "complementar" (fase
+            // oposta) que divide este horário. Só reserva nas semanas da fase dele.
+            if ($a->servicoBase && $a->servicoBase->quinzenal
+                && $a->quinzenal_fase !== null
+                && PlanoMensal::faseSemana($oc) !== (int) $a->quinzenal_fase) {
+                continue;
+            }
+
             $horaStr  = (string) $a->hora;
             $inicioAg = $oc->copy()->setTimeFromTimeString(substr($horaStr, 0, 5));
             if ($inicioAg <= $agora) {

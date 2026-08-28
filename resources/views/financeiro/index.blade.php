@@ -112,7 +112,8 @@
                                         <td>{{ $linha['cliente'] }}</td>
                                         <td>
                                             {{ $linha['servico'] }}
-                                            @if($linha['e_plano'])<span class="badge bg-secondary ms-1">Mensal</span>@endif
+                                            @if($linha['e_plano'])<span class="badge bg-secondary ms-1">Mensal</span>
+                                            @else<span class="badge ms-1" style="background:#6f42c6">Avulso</span>@endif
                                         </td>
                                         <td class="text-center text-nowrap">
                                             @if($linha['compareceu'] === true)

@@ -51,9 +51,11 @@ class PlanoTrocaController extends Controller
         // O novo dia/horário não pode ser o slot fixo de OUTRO mensalista — mesmo
         // que uma semana pareça livre (o dono pode ter remarcado pontualmente), o
         // slot é semanal e volta a ser usado por ele. (Não nomeamos o outro cliente
-        // na frente do cliente.)
-        if (AssinaturaMensal::slotFixoOcupado((int) $assinatura->funcionario_id, (int) $validated['dia_semana'], $validated['hora'], (int) $assinatura->user_id)
-            || PlanoMensal::slotOcupadoPorCiclo((int) $assinatura->funcionario_id, (int) $validated['dia_semana'], $validated['hora'], (int) $assinatura->user_id)) {
+        // na frente do cliente.) Quinzenal pode dividir o slot com outro quinzenal
+        // de fase oposta.
+        $fase = $assinatura->ehQuinzenal() ? $assinatura->quinzenal_fase : null;
+        if (AssinaturaMensal::slotFixoOcupado((int) $assinatura->funcionario_id, (int) $validated['dia_semana'], $validated['hora'], (int) $assinatura->user_id, $fase)
+            || PlanoMensal::slotOcupadoPorCiclo((int) $assinatura->funcionario_id, (int) $validated['dia_semana'], $validated['hora'], (int) $assinatura->user_id, $fase)) {
             return redirect()->back()->with('msgErro', 'Este dia/horário não está disponível para plano fixo. Escolha outro.');
         }
 
@@ -97,9 +99,10 @@ class PlanoTrocaController extends Controller
 
         // Revalida o slot na aprovação: pode ter sido ocupado por outro mensalista
         // entre o pedido e agora. Mantém a troca PENDENTE (o staff combina outro
-        // dia com o cliente ou recusa).
-        $donoSlot = AssinaturaMensal::slotFixoOcupado((int) $assinatura->funcionario_id, (int) $troca->dia_semana, (string) $troca->hora, (int) $assinatura->user_id)
-            ?? PlanoMensal::slotOcupadoPorCiclo((int) $assinatura->funcionario_id, (int) $troca->dia_semana, (string) $troca->hora, (int) $assinatura->user_id);
+        // dia com o cliente ou recusa). Quinzenal: fase oposta divide o slot.
+        $fase = $assinatura->ehQuinzenal() ? $assinatura->quinzenal_fase : null;
+        $donoSlot = AssinaturaMensal::slotFixoOcupado((int) $assinatura->funcionario_id, (int) $troca->dia_semana, (string) $troca->hora, (int) $assinatura->user_id, $fase)
+            ?? PlanoMensal::slotOcupadoPorCiclo((int) $assinatura->funcionario_id, (int) $troca->dia_semana, (string) $troca->hora, (int) $assinatura->user_id, $fase);
         if ($donoSlot) {
             return redirect()->back()->with(
                 'msgErro',
@@ -137,13 +140,18 @@ class PlanoTrocaController extends Controller
                     ? Carbon::parse($ciclo->data_inicio)->startOfDay()
                     : ($ciclo->mes ? Carbon::parse($ciclo->mes)->startOfMonth() : now()->startOfDay());
 
+                // Quinzenal: mantém a FASE do cliente (as semanas dele continuam
+                // sendo as mesmas paridades, só muda o dia).
+                $ehQuinzenal = $ciclo->ehQuinzenal();
+
                 $futuras = collect();
                 $cursor = max($base, now()->startOfDay())->copy();
                 $limite = $cursor->copy()->addMonths(3); // salvaguarda do loop
                 while ($cursor->lte($limite) && $futuras->count() < $restantes) {
                     $semana = $cursor->copy()->startOfWeek(Carbon::SUNDAY);
                     if ((int) $cursor->format('w') === (int) $troca->dia_semana
-                        && (!$ultimaSemanaOcupada || $semana->gt($ultimaSemanaOcupada))) {
+                        && (!$ultimaSemanaOcupada || $semana->gt($ultimaSemanaOcupada))
+                        && (!$ehQuinzenal || ($fase !== null && PlanoMensal::faseSemana($cursor) === (int) $fase))) {
                         $futuras->push($cursor->copy());
                     }
                     $cursor->addDay();

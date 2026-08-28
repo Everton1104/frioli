@@ -56,6 +56,56 @@ class PlanoMensal extends Model
         return filled($this->distribuicao) && count($this->distribuicao) > 0;
     }
 
+    /*
+     * QUINZENAL — semanas alternadas (fase A/B).
+     *
+     * Um plano quinzenal (combo com servicos.quinzenal=1) tem o slot fixo como
+     * qualquer mensal, mas o cliente só vem a cada 15 dias: as semanas do ciclo
+     * alternam entre "dele" e "livre" — nas livres o horário fica disponível
+     * para avulsos ou para um 2º quinzenal de fase OPOSTA (os dois dividem o
+     * mesmo dia/horário sem nunca colidir). A paridade é global (todas as
+     * semanas do calendário têm fase 0 ou 1), ancorada num domingo fixo — por
+     * isso fases de assinaturas diferentes são comparáveis entre si.
+     */
+    /** Domingo-âncora da paridade A/B das semanas (não mudar nunca). */
+    private const ANCORA_FASE = '2026-01-04';
+
+    /** Fase (0/1) da semana da data — semanas alternam a partir da âncora. */
+    public static function faseSemana(Carbon $data): int
+    {
+        $semana = $data->copy()->startOfWeek(Carbon::SUNDAY);
+        $ancora = Carbon::parse(self::ANCORA_FASE)->startOfWeek(Carbon::SUNDAY);
+        return abs($semana->diffInWeeks($ancora)) % 2;
+    }
+
+    /** Fase (0/1) das semanas do cliente dono deste ciclo; null = semanal. */
+    public function faseAssinatura(): ?int
+    {
+        $fase = $this->assinatura?->quinzenal_fase;
+        if ($fase !== null) {
+            return (int) $fase;
+        }
+        if (!$this->ehQuinzenal()) {
+            return null;
+        }
+        // Sem assinatura (legado): a fase é a semana do início do ciclo.
+        return $this->data_inicio
+            ? self::faseSemana(Carbon::parse($this->data_inicio))
+            : null;
+    }
+
+    /** Este ciclo é de um combo quinzenal (visitas a cada 15 dias). */
+    public function ehQuinzenal(): bool
+    {
+        return (bool) ($this->servico?->quinzenal ?? false);
+    }
+
+    /** Filtra uma lista de datas mantendo só as semanas da fase informada. */
+    public static function apenasFase(Collection $datas, int $fase): Collection
+    {
+        return $datas->filter(fn (Carbon $d) => self::faseSemana($d) === $fase)->values();
+    }
+
     /**
      * Descrição da próxima visita (não confirmada) conforme a distribuição.
      * Ex.: "corte + barba" (próxima = visita de ordem unidades_usadas+1).
@@ -126,10 +176,14 @@ class PlanoMensal extends Model
      * Ciclo EM VIGOR (ativo/aguardando pagamento, data_fim não encerrada) de OUTRO
      * cliente no mesmo slot (barbeiro + dia + hora). Cobrem o caso da assinatura
      * já cancelada cujo ciclo pago segue valendo: o slot segue ocupado até o fim.
+     *
+     * QUINZENAL ($faseCandidata = 0/1): ciclos quinzenais de fase OPOSTA não
+     * bloqueiam — os dois clientes dividem o mesmo slot, cada um nas suas
+     * semanas. Semanal (null) e quinzenal de MESMA fase bloqueiam como sempre.
      */
-    public static function slotOcupadoPorCiclo(int $funcionarioId, int $diaSemana, string $hora, ?int $ignorarUserId = null): ?self
+    public static function slotOcupadoPorCiclo(int $funcionarioId, int $diaSemana, string $hora, ?int $ignorarUserId = null, ?int $faseCandidata = null): ?self
     {
-        return static::query()
+        $candidatos = static::query()
             ->whereIn('status', [self::STATUS_ATIVO, self::STATUS_AGUARDANDO_PAGAMENTO])
             ->where('funcionario_id', $funcionarioId)
             ->where('dia_semana', $diaSemana)
@@ -138,8 +192,18 @@ class PlanoMensal extends Model
                 $q->whereNull('data_fim')->orWhereDate('data_fim', '>=', today());
             })
             ->when($ignorarUserId, fn($q) => $q->where('user_id', '!=', $ignorarUserId))
-            ->with('user:id,name')
-            ->first();
+            ->with(['user:id,name', 'servico:id,quinzenal', 'assinatura:id,quinzenal_fase'])
+            ->get();
+
+        foreach ($candidatos as $c) {
+            $faseOcupante = $c->faseAssinatura();
+            // Ocupante semanal bloqueia qualquer candidato; quinzenal bloqueia
+            // semanais e quinzenais de mesma fase.
+            if ($faseOcupante === null || $faseCandidata === null || $faseOcupante === $faseCandidata) {
+                return $c;
+            }
+        }
+        return null;
     }
 
     public function restantes(): int
@@ -195,6 +259,10 @@ class PlanoMensal extends Model
      * Datas (Carbon) de cada ocorrência do dia_semana na janela do ciclo
      * (data_inicio..data_fim). Fallback: mês-calendário (planos legados). Limita ao
      * nº de visitas do ciclo (unidades_total) — suporta "pagar 4 em mês de 5".
+     *
+     * QUINZENAL: mantém só as ocorrências cuja semana é da fase do cliente
+     * (data_inicio/data_fim já delimitam as visitas dele, mas a janela contém as
+     * semanas intermediárias — que ficam LIVRES para outros agendamentos).
      */
     public function datasOcorrencias()
     {
@@ -213,6 +281,14 @@ class PlanoMensal extends Model
             }
             $cursor->addDay();
         }
+
+        if ($this->ehQuinzenal()) {
+            $fase = $this->faseAssinatura();
+            if ($fase !== null) {
+                $out = self::apenasFase($out, $fase);
+            }
+        }
+
         return $out->take(max(1, (int) $this->unidades_total));
     }
 
@@ -436,9 +512,17 @@ class PlanoMensal extends Model
      *
      * @param ServicosModel $base       combo master (com composicao+distribuicao)
      * @param Collection    $ocorrencias datas disponíveis (do mês ou da janela)
+     * @param int|null      $fase        fase quinzenal (0/1); null = fase da 1ª ocorrência
      */
-    public static function calcularDeCombo(ServicosModel $base, Collection $ocorrencias): array
+    public static function calcularDeCombo(ServicosModel $base, Collection $ocorrencias, ?int $fase = null): array
     {
+        // Quinzenal: só as semanas da fase do cliente (renovação) ou da 1ª
+        // ocorrência (1º ciclo, fase ainda indefinida).
+        if ($base->quinzenal && $ocorrencias->isNotEmpty()) {
+            $fase ??= self::faseSemana($ocorrencias->first());
+            $ocorrencias = self::apenasFase($ocorrencias, $fase);
+        }
+
         $distribuicao = collect($base->distribuicao ?: []);
         $composicao   = $base->composicao ?: [];
         $baseVisitas  = $distribuicao->count();
@@ -487,9 +571,9 @@ class PlanoMensal extends Model
     }
 
     /** Criação (mês-calendário) lendo o combo master. */
-    public static function calcularComboDeCombo(ServicosModel $base, Carbon $mes, int $diaSemana): array
+    public static function calcularComboDeCombo(ServicosModel $base, Carbon $mes, int $diaSemana, ?int $fase = null): array
     {
-        return self::calcularDeCombo($base, self::ocorrenciasNoMes($mes, $diaSemana));
+        return self::calcularDeCombo($base, self::ocorrenciasNoMes($mes, $diaSemana), $fase);
     }
 
     /**
@@ -497,9 +581,15 @@ class PlanoMensal extends Model
      * $aPartirDe (inclusive, a próxima), limitadas ao mês corrente. Suporta início no
      * meio do mês — só as semanas restantes (ciclo parcial), valor proporcional.
      */
-    public static function calcularComboDeComboAPartirDe(ServicosModel $base, int $diaSemana, Carbon $aPartirDe): array
+    public static function calcularComboDeComboAPartirDe(ServicosModel $base, int $diaSemana, Carbon $aPartirDe, ?int $fase = null): array
     {
         $fim = $aPartirDe->copy()->endOfMonth();
+        // Quinzenal: as semanas do cliente podem não ter ocorrência no mês
+        // corrente (ex.: o "complementar" de outro quinzenal começa na semana
+        // seguinte) — estende a janela até caberem as ~2 visitas do ciclo dele.
+        if ($base->quinzenal) {
+            $fim = $fim->max($aPartirDe->copy()->addDays(40));
+        }
         $cur = $aPartirDe->copy()->startOfDay();
         while ((int) $cur->format('w') !== $diaSemana) {
             $cur->addDay();
@@ -509,24 +599,29 @@ class PlanoMensal extends Model
             $oc->push($cur->copy());
             $cur->addWeek();
         }
-        return self::calcularDeCombo($base, $oc);
+        return self::calcularDeCombo($base, $oc, $fase);
     }
 
     /** Renovação (janela a partir de $aPartirDe) lendo o combo master. */
-    public static function calcularProximoCicloDeCombo(ServicosModel $base, int $diaSemana, Carbon $aPartirDe): array
+    public static function calcularProximoCicloDeCombo(ServicosModel $base, int $diaSemana, Carbon $aPartirDe, ?int $fase = null): array
     {
         $visitas = count($base->distribuicao ?: []);
         $inicio = $aPartirDe->copy()->startOfDay();
         while ((int) $inicio->format('w') !== $diaSemana) {
             $inicio->addDay();
         }
+        // Quinzenal: coleta o DOBRO de semanas (o filtro de fase deixa metade).
+        $n = $visitas + 2;
+        if ($base->quinzenal) {
+            $n = $n * 2 + 2;
+        }
         $oc  = collect();
         $cur = $inicio->copy();
-        for ($i = 0; $i < $visitas + 2; $i++) {
+        for ($i = 0; $i < $n; $i++) {
             $oc->push($cur->copy());
             $cur->addWeek();
         }
-        return self::calcularDeCombo($base, $oc);
+        return self::calcularDeCombo($base, $oc, $fase);
     }
 
     /**

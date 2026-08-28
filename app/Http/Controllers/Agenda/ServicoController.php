@@ -33,6 +33,28 @@ class ServicoController extends Controller
         $composicao      = $recorrente ? $this->decodeJson($request->composicao) : null;
         $distribuicao    = $recorrente ? $this->decodeJson($request->distribuicao) : null;
         $visivelCliente  = $recorrente ? $request->boolean('mostrar_clientes') : true;
+
+        // Quinzenal: idas iguais → distribuição gerada do zero (o editor não a
+        // exibe). "Idas diferentes" → usa as 2 idas montadas no editor.
+        if ($recorrente && $request->boolean('quinzenal')) {
+            if ($request->boolean('idas_diferentes')) {
+                $distribuicao = $this->decodeJson($request->distribuicao);
+                $erroDist = $this->validarDistribuicao($distribuicao);
+                if (!$erroDist && (!$distribuicao || count($distribuicao) !== 2)) {
+                    $erroDist = 'O pacote quinzenal tem 2 idas por mês — monte a 1ª e a 2ª.';
+                }
+                if ($erroDist) {
+                    return redirect()->back()->withErrors(['distribuicao' => $erroDist])->withInput($request->all());
+                }
+            } else {
+                $distribuicao = $this->distribuicaoQuinzenal($composicao);
+                if (!$distribuicao) {
+                    return redirect()->back()->withErrors([
+                        'composicao' => 'Defina o preço de ao menos 1 serviço na composição — é o que o cliente faz a cada ida (de 15 em 15 dias).',
+                    ])->withInput($request->all());
+                }
+            }
+        }
         $totalMinutos    = ($request->duracao_h * 60) + $request->duracao_m;
 
         if ($totalMinutos < 15) {
@@ -41,11 +63,23 @@ class ServicoController extends Controller
             ])->withInput($request->all());
         }
 
+        // Toda visita do pacote precisa ter ao menos 1 serviço — distribuição com
+        // posição vazia criaria um horário marcado SEM serviço. (Cliente que vem
+        // a cada 15 dias é o tipo "Quinzenal", não semanas vazias na distribuição.)
+        $erroDist = $this->validarDistribuicao($distribuicao);
+        if ($erroDist) {
+            return redirect()->back()->withErrors(['distribuicao' => $erroDist])->withInput($request->all());
+        }
+
         ServicosModel::create([
             'descricao'       => $request->descricao,
             'duracao'         => $request->duracao_h . ':' . $request->duracao_m . ':00',
             'visivel_cliente' => $visivelCliente,
             'recorrente'      => $recorrente,
+            // Quinzenal: cliente vem a cada 15 dias (semana sim, semana não) — as
+            // semanas vazias do slot ficam livres, e outro quinzenal de fase oposta
+            // pode dividir o mesmo horário.
+            'quinzenal'       => $recorrente && $request->boolean('quinzenal'),
             // Combo mensal: o valor é a SOMA da composição (preços com desconto das
             // visitas). Serviço comum: usa o campo "valor" digitado.
             'valor'           => $recorrente ? $this->somaComposicao($composicao, $distribuicao) : ($request->filled('valor') ? $request->valor : null),
@@ -55,6 +89,39 @@ class ServicoController extends Controller
         ]);
 
         return redirect()->back()->with('msg', 'Serviço criado com sucesso!');
+    }
+
+    /**
+     * Distribuição do QUINZENAL: o seletor de visitas é oculto no editor — cada
+     * ida do cliente inclui TODOS os serviços com preço definido na composição,
+     * e o ciclo fecha com 2 idas/mês (+1 extra em meses de 5 semanas, mesmo
+     * mecanismo dos pacotes mensais: a extra repete a 1ª ida).
+     */
+    private function distribuicaoQuinzenal(?array $composicao): ?array
+    {
+        $keys = array_keys(array_filter($composicao ?: [], fn ($v) => (float) $v > 0));
+        return $keys ? [$keys, $keys] : null;
+    }
+
+    /**
+     * Distribuição válida = toda visita tem ao menos 1 serviço. Retorna a
+     * mensagem de erro (com o nº da visita) ou null se estiver ok. Visita vazia
+     * = horário agendado sem serviço — para "semana sim, semana não" existe o
+     * tipo Quinzenal (checkbox do combo), não a distribuição com buracos.
+     */
+    private function validarDistribuicao(?array $distribuicao): ?string
+    {
+        if (!$distribuicao) {
+            return null;
+        }
+        foreach (array_values($distribuicao) as $i => $visita) {
+            if (empty($visita) || !array_filter((array) $visita)) {
+                $n = $i + 1;
+                return "A visita {$n} da distribuição está sem nenhum serviço — toda visita do pacote precisa ter ao menos 1 serviço. "
+                    . 'Se a ideia é o cliente vir a cada 15 dias, marque o pacote como "Quinzenal" (não deixe visitas vazias).';
+            }
+        }
+        return null;
     }
 
     /** Decodifica um JSON de composição/distribuição vindos do form (ou null). */
@@ -91,6 +158,7 @@ class ServicoController extends Controller
             'id'             => $servico->id,
             'descricao'      => $servico->descricao,
             'tem_composicao' => $servico->temComposicao(),
+            'quinzenal'      => (bool) $servico->quinzenal,
             'composicao'     => $servico->composicao ?: (object) [],
             'distribuicao'   => $servico->distribuicao ?: [],
             'total_base'     => $servico->precoTotalBase(),
@@ -165,12 +233,41 @@ class ServicoController extends Controller
         $distribuicao    = $recorrente ? $this->decodeJson($request->distribuicao_edt_servico) : null;
         $visivelCliente  = $recorrente ? $request->boolean('mostrar_clientes_edt_servico') : true;
 
+        // Quinzenal: idas iguais → distribuição gerada; "idas diferentes" → as 2
+        // idas montadas no editor.
+        if ($recorrente && $request->boolean('quinzenal_edt_servico')) {
+            if ($request->boolean('idas_diferentes_edt_servico')) {
+                $distribuicao = $this->decodeJson($request->distribuicao_edt_servico);
+                $erroDist = $this->validarDistribuicao($distribuicao);
+                if (!$erroDist && (!$distribuicao || count($distribuicao) !== 2)) {
+                    $erroDist = 'O pacote quinzenal tem 2 idas por mês — monte a 1ª e a 2ª.';
+                }
+                if ($erroDist) {
+                    return redirect()->back()->withErrors(['distribuicao_edt_servico' => $erroDist])->withInput($request->all());
+                }
+            } else {
+                $distribuicao = $this->distribuicaoQuinzenal($composicao);
+                if (!$distribuicao) {
+                    return redirect()->back()->withErrors([
+                        'composicao_edt_servico' => 'Defina o preço de ao menos 1 serviço na composição — é o que o cliente faz a cada ida (de 15 em 15 dias).',
+                    ])->withInput($request->all());
+                }
+            }
+        }
+
+        // Mesma regra do store: nenhuma visita vazia na distribuição.
+        $erroDist = $this->validarDistribuicao($distribuicao);
+        if ($erroDist) {
+            return redirect()->back()->withErrors(['distribuicao_edt_servico' => $erroDist])->withInput($request->all());
+        }
+
         $servico->update([
             'descricao'       => $request['descricao_edt_servico'],
             'duracao'         => $request['duracao_h_edt_servico'] . ':' . $request->duracao_m_edt_servico . ':00',
             'status'          => $request['status_servico'],
             'visivel_cliente' => $visivelCliente,
             'recorrente'      => $recorrente,
+            'quinzenal'       => $recorrente && $request->boolean('quinzenal_edt_servico'),
             'valor'           => $recorrente ? $this->somaComposicao($composicao, $distribuicao) : ($request->filled('valor_edt_servico') ? $request->valor_edt_servico : null),
             'repasse_percent' => $request->filled('repasse_percent_edt_servico') ? $request->repasse_percent_edt_servico : null,
             'composicao'      => $composicao,
