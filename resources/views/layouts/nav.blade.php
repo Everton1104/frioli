@@ -71,7 +71,7 @@
         @endif
         @if(Auth::user()->adm == 1)
         <div class="menu-item" onclick="window.location.href='{{ url('/admin') }}'">
-            Painel Admin
+            Editar Conteúdo
         </div>
         <div class="menu-item" onclick="window.location.href='{{ route('financeiro.index') }}'">
             Financeiro
