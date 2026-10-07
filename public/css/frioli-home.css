@@ -42,6 +42,24 @@ body { background: #0F0D0B; }
 .fh .btn-linha { background: transparent; color: var(--creme); border: 1px solid var(--linha-ouro); padding: 17px 33px; }
 .fh .btn-linha:hover { border-color: var(--ouro); color: var(--ouro); transform: translateY(-2px); }
 
+/* ---------- CTA FLUTUANTE (canto inferior direito; some sobre o hero) ---------- */
+.fh .fab-agendar {
+  position: fixed; right: 22px; bottom: calc(34px + env(safe-area-inset-bottom, 0px)); z-index: 70;
+  display: inline-flex; align-items: center; gap: 9px; padding: 15px 26px; border-radius: 999px;
+  background: var(--gradiente-ouro); color: var(--preto); font-weight: 700; font-size: 14px;
+  letter-spacing: .07em; text-transform: uppercase; text-decoration: none; white-space: nowrap;
+  box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 0 20px rgba(201,162,75,.18), 0 0 0 1px rgba(228,207,146,.28) inset;
+  animation: fab-brilho 5.2s ease-in-out infinite;
+  transition: transform .3s cubic-bezier(.16,1,.3,1), opacity .3s ease, box-shadow .3s ease;
+}
+.fh .fab-agendar:hover { transform: translateY(-2px) scale(1.02); }
+.fh .fab-agendar svg { display: block; flex: none; }
+.fh .fab-agendar.fab-fora { opacity: 0; transform: translateY(16px); pointer-events: none; animation: none; }
+@keyframes fab-brilho {
+  0%, 100% { box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 0 20px rgba(201,162,75,.18), 0 0 0 1px rgba(228,207,146,.28) inset; }
+  50%      { box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 0 34px rgba(201,162,75,.42), 0 0 0 1px rgba(228,207,146,.28) inset; }
+}
+
 .fh section { padding: 128px 0; }
 .fh h2 { font-size: clamp(38px, 5vw, 62px); }
 .fh .sec-carvao { background: var(--carvao); }
@@ -123,6 +141,8 @@ body { background: #0F0D0B; }
   .fh .hero-conteudo { padding: 118px 0 88px; }
   .fh .hero-logo img { width: min(62vw, 260px); }
   .fh .rolar { display: none; }
+  .fh .fab-agendar { right: 16px; padding: 13px 20px; font-size: 13px; gap: 8px; }
+  .fh .fab-agendar svg { width: 15px; height: 15px; }
 }
 
 /* ---------- RÉGUA ---------- */
@@ -309,6 +329,7 @@ body { background: #0F0D0B; }
   .fh .hero-conteudo > * { opacity: 1; transform: none; filter: none; }
   .fh .hero-cortina { display: none; }
   .fh .hero-logo::before { animation: none; opacity: .7; }
+  .fh .fab-agendar { animation: none; transition: none; }
   .fh .rolar span { animation: none; }
   .fh .guia { opacity: 1; transform: none; }
   .fh .etapa.ativa { transform: none; }

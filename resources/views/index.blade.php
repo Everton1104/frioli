@@ -474,6 +474,12 @@
         </footer>
 
         <form id="fh-logout" action="{{ url('/logout') }}" method="POST" style="display:none">@csrf</form>
+
+        {{-- CTA FLUTUANTE — canto inferior direito; some enquanto o hero está em cena --}}
+        <a class="fab-agendar" href="{{ $rotaAgendar }}">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg>
+            Agende agora
+        </a>
     </div>
 @endsection
 @section("scriptEnd")
@@ -487,7 +493,14 @@
     requestAnimationFrame(function () { fh.classList.add('aberto'); });
 
     var nav = document.querySelector('.fh-nav');
-    function onScroll() { if (nav) nav.classList.toggle('solida', (window.scrollY || window.pageYOffset) > 80); }
+    var fab = document.querySelector('.fab-agendar');
+    var hero = document.querySelector('.fh .hero');
+    function onScroll() {
+        var y = window.scrollY || window.pageYOffset;
+        if (nav) nav.classList.toggle('solida', y > 80);
+        // CTA flutuante: some enquanto o hero domina a tela (o CTA do hero já cobre)
+        if (fab) fab.classList.toggle('fab-fora', hero ? y < hero.offsetHeight * 0.75 : y < 400);
+    }
     window.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
 
