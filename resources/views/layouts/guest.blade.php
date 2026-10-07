@@ -4,7 +4,8 @@
     // Fundo + logo da marca (fixos da referência; não usam as chaves antigas
     // branding.logo/home.bg, que podem ter valores velhos em produção).
     $guestBg   = Storage::url('site/hero.jpg');
-    $guestLogo = Storage::url('site/logo-frioli.png');
+    // ?v=filemtime busta o cache do Cloudflare quando o arquivo troca
+    $guestLogo = Storage::url('site/logo-frioli.png').'?v='.filemtime(Storage::disk('public')->path('site/logo-frioli.png'));
 @endphp
 @section('style')
     <link rel="stylesheet" href="{{ asset('css/frioli-guest.css') }}?v={{ time() }}">

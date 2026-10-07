@@ -4,8 +4,10 @@
     use App\Models\PageContent;
 
     // Fotos editáveis (chaves novas, type=image, value vazio → fallback em site/).
-    $hero     = PageContent::image('home', 'hero', Storage::url('site/hero.jpg'));
-    $logo     = Storage::url('site/logo-frioli.png'); // fixo da marca
+    // home.hero = fundo do hero (foto da casa, desfocada atrás do logo).
+    $hero     = PageContent::image('home', 'hero', Storage::url('site/interior.jpg'));
+    // fixo da marca; ?v=filemtime busta o cache do Cloudflare quando o arquivo troca
+    $logo     = Storage::url('site/logo-frioli.png').'?v='.filemtime(Storage::disk('public')->path('site/logo-frioli.png'));
     $interior = PageContent::image('sobre', 'interior', Storage::url('site/interior.jpg'));
     $salao    = PageContent::image('espaco', 'salao', Storage::url('site/salao.jpg'));
     $cadeira  = PageContent::image('espaco', 'cadeira', Storage::url('site/salao-cadeira.jpg'));
@@ -83,32 +85,25 @@
             </div>
         </nav>
 
-        {{-- HERO --}}
+        {{-- HERO — logo central sobre foto da casa desfocada --}}
         <header class="hero" id="topo">
+            <div class="hero-fundo" aria-hidden="true">
+                <img src="{{ $hero }}" alt="" fetchpriority="high">
+                <div class="hero-veu"></div>
+                <div class="grao"></div>
+            </div>
+
             <div class="hero-texto">
                 <div class="hero-conteudo">
+                    <div class="hero-logo">
+                        <img src="{{ $logo }}" alt="Barbearia Frioli Hair — desde 2015" width="462" height="520">
+                    </div>
                     <h1>{!! PageContent::def('hero', 'headline') !!}</h1>
                     <p class="lede">{!! PageContent::def('hero', 'lede') !!}</p>
                     <div class="hero-cta">
                         <a class="btn-ouro" href="{{ $rotaAgendar }}">Agendar horário</a>
                         <a class="btn-linha" href="{{ $waLink }}" target="_blank" rel="noopener">Chamar no WhatsApp</a>
                     </div>
-                </div>
-            </div>
-
-            <div class="hero-palco">
-                <div class="hero-cena">
-                    <div data-holofote data-holofote-centro="0.5,0.3" data-holofote-raio="0.34">
-                        <div class="hr-camada hr-base">
-                            <img src="{{ $hero }}" alt="Frioli fazendo a barba na navalha na Frioli Hair" fetchpriority="high">
-                        </div>
-                        <div class="hr-camada hr-revela">
-                            <img src="{{ $hero }}" alt="" aria-hidden="true">
-                            <div class="hr-brilho"></div>
-                        </div>
-                    </div>
-                    <div class="hero-veu"></div>
-                    <div class="grao"></div>
                 </div>
             </div>
 
@@ -502,29 +497,6 @@
         });
     }, { threshold: 0.14 });
     document.querySelectorAll('.fh .reveal').forEach(function (el) { io.observe(el); });
-
-    if (!reduce && fine) {
-        var hero = document.querySelector('.fh .hero');
-        var cena = document.querySelector('.fh .hero-cena');
-        var holo = document.querySelector('.fh [data-holofote]');
-        if (hero && cena && holo) {
-            fh.classList.add('hr-anim');
-            hero.addEventListener('mousemove', function (e) {
-                var r = hero.getBoundingClientRect();
-                var px = (e.clientX - r.left) / r.width;
-                var py = (e.clientY - r.top) / r.height;
-                holo.style.setProperty('--hr-x', (px * 100) + '%');
-                holo.style.setProperty('--hr-y', (py * 100) + '%');
-                holo.style.setProperty('--hr-r', Math.min(r.width, r.height) * 0.34 + 'px');
-                cena.style.setProperty('--tc-ry', ((px - 0.5) * 3.2) + 'deg');
-                cena.style.setProperty('--tc-rx', (-(py - 0.5) * 3.2) + 'deg');
-            });
-            hero.addEventListener('mouseleave', function () {
-                cena.style.setProperty('--tc-rx', '0deg');
-                cena.style.setProperty('--tc-ry', '0deg');
-            });
-        }
-    }
 
     var varre = document.querySelector('#varredura-luz');
     var dentes = Array.prototype.slice.call(document.querySelectorAll('.dente'));
